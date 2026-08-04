@@ -1,0 +1,17 @@
+{
+  "name": "wms",
+  "version": "1.0.0",
+  "description": "Work management system backend",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "seed:superadmin": "node scripts/seed-superadmin.js",
+    "db:check": "node scripts/check-db.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
+  }
+}
