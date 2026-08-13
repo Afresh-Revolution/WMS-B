@@ -1,16 +1,43 @@
 const express = require("express");
 const { authenticate, requireRole } = require("../auth/middleware");
 const { hashPassword, verifyPassword } = require("../auth/passwords");
-const { issueAccessToken } = require("../auth/tokens");
+const { issueAccessToken, issueRefreshToken } = require("../auth/tokens");
+const {
+  createSession,
+  findSessionByRefreshToken,
+  recordFailedLogin,
+  recordLoginHistory,
+  revokeSession,
+} = require("../auth/sessionStore");
 const {
   createSuperadmin,
   getUserByEmail,
+  getUserById,
   hasSuperadmin,
   sanitizeUser,
+  updateUser,
   updateUserPassword,
 } = require("../auth/userStore");
 
 const superadminRouter = express.Router();
+const MAX_FAILED_LOGINS = 5;
+
+function issueAuthResponse(user, req) {
+  const refreshToken = issueRefreshToken();
+  const session = createSession({ user, refreshToken, req });
+  return {
+    token: issueAccessToken(user, session.id),
+    refreshToken,
+    session: {
+      id: session.id,
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+      createdAt: session.createdAt,
+      lastSeenAt: session.lastSeenAt,
+    },
+    user: sanitizeUser(user),
+  };
+}
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -68,9 +95,10 @@ superadminRouter.post("/bootstrap", (req, res, next) => {
       email: email.trim(),
       passwordHash: hashPassword(password),
     });
-    const token = issueAccessToken(user);
+    const auth = issueAuthResponse(user, req);
+    recordLoginHistory({ userId: user.id, status: "success", req, reason: "bootstrap" });
 
-    return res.status(201).json({ token, user: sanitizeUser(user) });
+    return res.status(201).json(auth);
   } catch (error) {
     return next(error);
   }
@@ -84,14 +112,65 @@ superadminRouter.post("/login", (req, res) => {
   }
 
   const user = getUserByEmail(email.trim());
-  if (!user || user.role !== "superadmin" || !verifyPassword(password, user.passwordHash)) {
+  if (!user || user.role !== "superadmin") {
+    recordFailedLogin({ email, req, reason: "unknown_superadmin" });
+    recordLoginHistory({ userId: null, status: "failed", req, reason: "unknown_superadmin" });
     return res.status(401).json({ error: "Invalid superadmin credentials." });
   }
 
-  return res.json({ token: issueAccessToken(user), user: sanitizeUser(user) });
+  if (user.status === "locked" || user.lockedAt) {
+    recordFailedLogin({ email, userId: user.id, req, reason: "account_locked" });
+    recordLoginHistory({ userId: user.id, status: "failed", req, reason: "account_locked" });
+    return res.status(423).json({ error: "Account is locked." });
+  }
+
+  if (!verifyPassword(password, user.passwordHash)) {
+    const failedLoginCount = Number(user.failedLoginCount || 0) + 1;
+    const updates = { failedLoginCount };
+
+    if (failedLoginCount >= MAX_FAILED_LOGINS) {
+      updates.status = "locked";
+      updates.lockedAt = new Date().toISOString();
+    }
+
+    updateUser(user.id, updates);
+    recordFailedLogin({ email, userId: user.id, req, reason: "invalid_password" });
+    recordLoginHistory({ userId: user.id, status: "failed", req, reason: "invalid_password" });
+    return res.status(401).json({ error: "Invalid superadmin credentials." });
+  }
+
+  const updatedUser = updateUser(user.id, { failedLoginCount: 0, lastLoginAt: new Date().toISOString() });
+  recordLoginHistory({ userId: user.id, status: "success", req, reason: "password" });
+
+  return res.json(issueAuthResponse(updatedUser || user, req));
+});
+
+superadminRouter.post("/refresh", (req, res) => {
+  const { refreshToken } = req.body || {};
+
+  if (typeof refreshToken !== "string") {
+    return res.status(400).json({ error: "Refresh token is required." });
+  }
+
+  const session = findSessionByRefreshToken(refreshToken);
+  if (!session) {
+    return res.status(401).json({ error: "Invalid refresh token." });
+  }
+
+  const user = getUserById(session.userId);
+  if (!user || user.role !== "superadmin" || user.status !== "active") {
+    return res.status(401).json({ error: "User no longer has access." });
+  }
+
+  return res.json({ token: issueAccessToken(user, session.id), user: sanitizeUser(user) });
 });
 
 superadminRouter.post("/logout", authenticate, requireRole("superadmin"), (req, res) => {
+  if (req.authSessionId) {
+    revokeSession(req.authSessionId, req.user.id);
+  }
+
+  recordLoginHistory({ userId: req.user.id, status: "logout", req, reason: "user_logout" });
   res.status(204).send();
 });
 
@@ -99,7 +178,7 @@ superadminRouter.get("/me", authenticate, requireRole("superadmin"), (req, res) 
   res.json({ user: req.user });
 });
 
-superadminRouter.patch("/password", authenticate, requireRole("superadmin"), (req, res, next) => {
+function changePasswordHandler(req, res, next) {
   try {
     const { currentPassword, newPassword } = req.body || {};
 
@@ -122,6 +201,15 @@ superadminRouter.patch("/password", authenticate, requireRole("superadmin"), (re
   } catch (error) {
     return next(error);
   }
-});
+}
+
+superadminRouter.patch("/password", authenticate, requireRole("superadmin"), changePasswordHandler);
+
+superadminRouter.post(
+  "/change-password",
+  authenticate,
+  requireRole("superadmin"),
+  changePasswordHandler
+);
 
 module.exports = { superadminRouter };

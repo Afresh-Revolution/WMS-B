@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60 * 8;
+const REFRESH_TOKEN_BYTES = 48;
 
 function base64UrlEncode(value) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -17,7 +18,7 @@ function sign(input) {
     .digest("base64url");
 }
 
-function issueAccessToken(user) {
+function issueAccessToken(user, sessionId) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
   const payload = {
@@ -25,12 +26,21 @@ function issueAccessToken(user) {
     email: user.email,
     role: user.role,
     name: user.name,
+    sid: sessionId || null,
     iat: now,
     exp: now + ACCESS_TOKEN_TTL_SECONDS,
   };
 
   const unsignedToken = `${base64UrlEncode(header)}.${base64UrlEncode(payload)}`;
   return `${unsignedToken}.${sign(unsignedToken)}`;
+}
+
+function issueRefreshToken() {
+  return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString("base64url");
+}
+
+function hashToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("base64url");
 }
 
 function verifyAccessToken(token) {
@@ -68,4 +78,4 @@ function verifyAccessToken(token) {
   }
 }
 
-module.exports = { issueAccessToken, verifyAccessToken };
+module.exports = { hashToken, issueAccessToken, issueRefreshToken, verifyAccessToken };

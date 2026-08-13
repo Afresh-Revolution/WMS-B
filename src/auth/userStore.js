@@ -46,9 +46,18 @@ function sanitizeUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
+    status: user.status || "active",
+    permissions: Array.isArray(user.permissions) ? user.permissions : [],
+    forcePasswordReset: Boolean(user.forcePasswordReset),
+    passwordExpiresAt: user.passwordExpiresAt || null,
+    lockedAt: user.lockedAt || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
+}
+
+function listUsers() {
+  return readUsers().map(sanitizeUser);
 }
 
 function getUserByEmail(email) {
@@ -89,6 +98,13 @@ function createSuperadmin({ name, email, passwordHash }) {
     email: normalizedEmail,
     passwordHash,
     role: "superadmin",
+    status: "active",
+    permissions: [],
+    failedLoginCount: 0,
+    forcePasswordReset: false,
+    passwordChangedAt: now,
+    passwordExpiresAt: null,
+    lockedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -97,6 +113,60 @@ function createSuperadmin({ name, email, passwordHash }) {
   writeUsers(users);
 
   return user;
+}
+
+function createUser({ name, email, passwordHash, role = "employee", permissions = [], status = "active" }) {
+  const users = readUsers();
+  const normalizedEmail = email.toLowerCase();
+
+  if (users.some((user) => user.email === normalizedEmail)) {
+    const error = new Error("A user with this email already exists.");
+    error.statusCode = 409;
+    error.publicMessage = error.message;
+    throw error;
+  }
+
+  const now = new Date().toISOString();
+  const user = {
+    id: crypto.randomUUID(),
+    name,
+    email: normalizedEmail,
+    passwordHash,
+    role,
+    status,
+    permissions,
+    failedLoginCount: 0,
+    forcePasswordReset: false,
+    passwordChangedAt: now,
+    passwordExpiresAt: null,
+    lockedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  users.push(user);
+  writeUsers(users);
+  return user;
+}
+
+function updateUser(id, payload) {
+  const users = readUsers();
+  const userIndex = users.findIndex((user) => user.id === id);
+
+  if (userIndex === -1) {
+    return null;
+  }
+
+  users[userIndex] = {
+    ...users[userIndex],
+    ...payload,
+    id: users[userIndex].id,
+    email: payload.email ? String(payload.email).toLowerCase() : users[userIndex].email,
+    updatedAt: new Date().toISOString(),
+  };
+  writeUsers(users);
+
+  return users[userIndex];
 }
 
 function updateUserPassword(id, passwordHash) {
@@ -110,6 +180,8 @@ function updateUserPassword(id, passwordHash) {
   users[userIndex] = {
     ...users[userIndex],
     passwordHash,
+    forcePasswordReset: false,
+    passwordChangedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   writeUsers(users);
@@ -118,10 +190,13 @@ function updateUserPassword(id, passwordHash) {
 }
 
 module.exports = {
+  createUser,
   createSuperadmin,
   getUserByEmail,
   getUserById,
   hasSuperadmin,
+  listUsers,
   sanitizeUser,
+  updateUser,
   updateUserPassword,
 };
