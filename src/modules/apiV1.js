@@ -8,6 +8,7 @@ const { billsRouter } = require("./bills/routes");
 const { dashboardRouter } = require("./dashboard/routes");
 const { departmentsRouter } = require("./departments/routes");
 const { employersRouter } = require("./employers/routes");
+const { expensePoliciesRouter, expensesRouter } = require("./expenses/routes");
 const { leaveRouter } = require("./leave/routes");
 const { meetingRoomsRouter, meetingTypesRouter, meetingsRouter } = require("./meetings/routes");
 const { employeePayrollRouter, payrollRouter, salariesRouter } = require("./payroll/routes");
@@ -39,6 +40,8 @@ function createApiV1Router() {
   router.use("/purchase-orders", purchaseOrdersRouter);
   router.use("/receipts", receiptsRouter);
   router.use("/bills", billsRouter);
+  router.use("/expenses", expensesRouter);
+  router.use("/expense-policies", expensePoliciesRouter);
 
   router.get("/roles/catalog", authenticate, requireRole("superadmin"), (req, res) => {
     return res.json({
@@ -60,9 +63,21 @@ function createApiV1Router() {
 
   for (const moduleDefinition of RESOURCE_MODULES) {
     if (
-      ["users", "employers", "employees", "departments", "branches", "leave", "leave-types", "meetings", "targets", "payroll", "purchases", "bills"].includes(
-        moduleDefinition.key
-      )
+      [
+        "users",
+        "employers",
+        "employees",
+        "departments",
+        "branches",
+        "leave",
+        "leave-types",
+        "meetings",
+        "targets",
+        "payroll",
+        "purchases",
+        "bills",
+        "expenses",
+      ].includes(moduleDefinition.key)
     ) {
       continue;
     }

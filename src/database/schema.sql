@@ -1769,6 +1769,8 @@ create table if not exists expense_categories (
   name text not null unique,
   description text,
   status text not null default 'ACTIVE',
+  requires_receipt boolean not null default false,
+  max_amount numeric(14,2),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1798,18 +1800,58 @@ create table if not exists accounts (
 
 create table if not exists expenses (
   id uuid primary key default gen_random_uuid(),
+  reference text unique,
   employee_id uuid references employees(id),
   department_id uuid references departments(id),
   purchase_order_id uuid references purchase_orders(id),
   vendor_bill_id uuid,
   bill_id uuid references bills(id),
   category_id uuid references expense_categories(id),
+  description text,
+  notes text,
   amount numeric(14,2) not null default 0,
+  original_amount numeric(14,2) not null default 0,
+  approved_amount numeric(14,2),
+  reimbursement_amount numeric(14,2) not null default 0,
   currency text not null default 'NGN',
   expense_date date,
   created_by uuid references users(id),
+  submitted_at timestamptz,
+  approved_by uuid references users(id),
+  approved_at timestamptz,
+  rejected_by uuid references users(id),
+  rejected_at timestamptz,
+  rejection_reason text,
+  cancelled_by uuid references users(id),
+  cancelled_at timestamptz,
+  cancellation_reason text,
+  adjusted_by uuid references users(id),
+  adjusted_at timestamptz,
+  adjustment_reason text,
+  current_approval_level integer not null default 0,
+  required_approval_levels integer not null default 1,
+  approval_status text not null default 'PENDING',
+  reimbursement_status text not null default 'NOT_REQUIRED',
+  policy_status text,
+  policy_violations jsonb not null default '[]'::jsonb,
+  possible_duplicate boolean not null default false,
+  duplicate_expense_id uuid,
+  source text,
+  expense_type text,
   receipt_file_id uuid,
   status text not null default 'pending',
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_items (
+  id uuid primary key default gen_random_uuid(),
+  expense_id uuid not null references expenses(id),
+  description text not null,
+  quantity numeric(14,2) not null default 1,
+  unit_price numeric(14,2) not null default 0,
+  total numeric(14,2) not null default 0,
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -1818,9 +1860,102 @@ create table if not exists expenses (
 create table if not exists expense_approvals (
   id uuid primary key default gen_random_uuid(),
   expense_id uuid not null references expenses(id),
+  approver_id uuid references users(id),
   approved_by uuid references users(id),
+  approval_level integer not null default 1,
   status text not null,
+  comment text,
   note text,
+  approved_at timestamptz,
+  rejected_at timestamptz,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_receipts (
+  id uuid primary key default gen_random_uuid(),
+  expense_id uuid not null references expenses(id),
+  uploaded_by uuid references users(id),
+  file_name text not null,
+  file_url text not null,
+  file_type text,
+  file_size bigint not null default 0,
+  receipt_number text,
+  receipt_date date,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_comments (
+  id uuid primary key default gen_random_uuid(),
+  expense_id uuid not null references expenses(id),
+  user_id uuid references users(id),
+  comment text not null,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_history (
+  id uuid primary key default gen_random_uuid(),
+  expense_id uuid not null references expenses(id),
+  actor_id uuid references users(id),
+  action text not null,
+  old_status text,
+  new_status text,
+  comment text,
+  metadata jsonb not null default '{}'::jsonb,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_reimbursements (
+  id uuid primary key default gen_random_uuid(),
+  expense_id uuid not null references expenses(id),
+  employee_id uuid references employees(id),
+  amount numeric(14,2) not null default 0,
+  payment_method text not null default 'BANK_TRANSFER',
+  account_id uuid references accounts(id),
+  transaction_reference text,
+  payment_date date,
+  status text not null default 'PENDING',
+  processed_by uuid references users(id),
+  notes text,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists expense_policies (
+  id uuid primary key default gen_random_uuid(),
+  category_id uuid references expense_categories(id),
+  department_id uuid references departments(id),
+  max_amount numeric(14,2),
+  requires_receipt boolean not null default false,
+  receipt_required_amount numeric(14,2),
+  requires_manager_approval boolean not null default true,
+  requires_finance_approval boolean not null default true,
+  reimbursement_allowed boolean not null default true,
+  currency text not null default 'NGN',
+  active boolean not null default true,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists employee_bank_accounts (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references employees(id),
+  bank_name text not null,
+  account_name text not null,
+  account_number text not null,
+  bank_code text,
+  is_primary boolean not null default false,
+  status text not null default 'ACTIVE',
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -2227,9 +2362,37 @@ alter table purchase_items add column if not exists total numeric(14,2) not null
 alter table expenses add column if not exists purchase_order_id uuid references purchase_orders(id);
 alter table expenses add column if not exists vendor_bill_id uuid;
 alter table expenses add column if not exists bill_id uuid references bills(id);
+alter table expenses add column if not exists reference text;
+alter table expenses add column if not exists description text;
+alter table expenses add column if not exists notes text;
+alter table expenses add column if not exists original_amount numeric(14,2) not null default 0;
+alter table expenses add column if not exists approved_amount numeric(14,2);
+alter table expenses add column if not exists reimbursement_amount numeric(14,2) not null default 0;
 alter table expenses add column if not exists currency text not null default 'NGN';
 alter table expenses add column if not exists expense_date date;
 alter table expenses add column if not exists created_by uuid references users(id);
+alter table expenses add column if not exists submitted_at timestamptz;
+alter table expenses add column if not exists approved_by uuid references users(id);
+alter table expenses add column if not exists approved_at timestamptz;
+alter table expenses add column if not exists rejected_by uuid references users(id);
+alter table expenses add column if not exists rejected_at timestamptz;
+alter table expenses add column if not exists rejection_reason text;
+alter table expenses add column if not exists cancelled_by uuid references users(id);
+alter table expenses add column if not exists cancelled_at timestamptz;
+alter table expenses add column if not exists cancellation_reason text;
+alter table expenses add column if not exists adjusted_by uuid references users(id);
+alter table expenses add column if not exists adjusted_at timestamptz;
+alter table expenses add column if not exists adjustment_reason text;
+alter table expenses add column if not exists current_approval_level integer not null default 0;
+alter table expenses add column if not exists required_approval_levels integer not null default 1;
+alter table expenses add column if not exists approval_status text not null default 'PENDING';
+alter table expenses add column if not exists reimbursement_status text not null default 'NOT_REQUIRED';
+alter table expenses add column if not exists policy_status text;
+alter table expenses add column if not exists policy_violations jsonb not null default '[]'::jsonb;
+alter table expenses add column if not exists possible_duplicate boolean not null default false;
+alter table expenses add column if not exists duplicate_expense_id uuid;
+alter table expenses add column if not exists source text;
+alter table expenses add column if not exists expense_type text;
 
 alter table bills add column if not exists reference text;
 alter table bills add column if not exists purchase_order_id uuid references purchase_orders(id);
@@ -2276,6 +2439,15 @@ alter table bill_payments add column if not exists deleted_at timestamptz;
 
 alter table expense_categories add column if not exists description text;
 alter table expense_categories add column if not exists status text not null default 'ACTIVE';
+alter table expense_categories add column if not exists requires_receipt boolean not null default false;
+alter table expense_categories add column if not exists max_amount numeric(14,2);
+
+alter table expense_approvals add column if not exists approver_id uuid references users(id);
+alter table expense_approvals add column if not exists approval_level integer not null default 1;
+alter table expense_approvals add column if not exists comment text;
+alter table expense_approvals add column if not exists approved_at timestamptz;
+alter table expense_approvals add column if not exists rejected_at timestamptz;
+alter table expense_approvals add column if not exists deleted_at timestamptz;
 
 create index if not exists idx_users_role_status on users(role, status);
 create index if not exists idx_sessions_user_status on sessions(user_id, status);
@@ -2370,6 +2542,18 @@ create index if not exists idx_payment_methods_status on payment_methods(status)
 create index if not exists idx_accounts_status on accounts(status);
 create index if not exists idx_expenses_status on expenses(status);
 create index if not exists idx_expenses_bill on expenses(bill_id);
+create index if not exists idx_expenses_claim_employee on expenses(employee_id, status) where source = 'expense_claim' or expense_type = 'CLAIM';
+create index if not exists idx_expenses_claim_department on expenses(department_id, status) where source = 'expense_claim' or expense_type = 'CLAIM';
+create index if not exists idx_expenses_claim_category on expenses(category_id, expense_date) where source = 'expense_claim' or expense_type = 'CLAIM';
+create index if not exists idx_expenses_claim_reimbursement on expenses(reimbursement_status) where source = 'expense_claim' or expense_type = 'CLAIM';
+create index if not exists idx_expense_items_expense on expense_items(expense_id);
+create index if not exists idx_expense_approvals_expense on expense_approvals(expense_id, approval_level, status);
+create index if not exists idx_expense_receipts_expense on expense_receipts(expense_id);
+create index if not exists idx_expense_comments_expense on expense_comments(expense_id, created_at);
+create index if not exists idx_expense_history_expense on expense_history(expense_id, created_at);
+create index if not exists idx_expense_reimbursements_expense on expense_reimbursements(expense_id, status);
+create index if not exists idx_expense_policies_category_department on expense_policies(category_id, department_id, active);
+create index if not exists idx_employee_bank_accounts_employee on employee_bank_accounts(employee_id, status);
 create index if not exists idx_operational_audit_module on operational_audit_logs(module, created_at);
 create index if not exists idx_audit_logs_module on audit_logs(module, created_at);
 create index if not exists idx_audit_logs_actor on audit_logs(actor_id, created_at);
