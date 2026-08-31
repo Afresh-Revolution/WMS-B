@@ -2,6 +2,8 @@
 
 Express backend for the work management system.
 
+Role dashboards are backend-only JSON APIs for Super Admin, Manager, HR, Secretary, and Accountant. UI mockups are used as product references for endpoint behavior and permission boundaries.
+
 ## Setup
 
 Copy `.env.example` into `.env` and set strong secret values before deploying.
@@ -78,13 +80,68 @@ Core routes:
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/reset-password`
 - `POST /api/v1/auth/change-password`
+- `GET /api/v1/auth/me`
+- `GET /api/v1/auth/sessions`
+- `DELETE /api/v1/auth/sessions/:id`
 - `GET /api/v1/dashboard/overview`
+- `GET /api/v1/dashboard/super-admin`
+- `GET /api/v1/search?q=term`
+- `GET /api/v1/security`
+- `GET /api/v1/security/dashboard`
 - `GET /api/v1/security/events`
+- `GET /api/v1/security/login-attempts`
 - `GET /api/v1/security/sessions`
-- `POST /api/v1/security/users/:id/lock`
+- `PATCH /api/v1/security/password-policy`
+- `PATCH /api/v1/security/login-policy`
+- `PATCH /api/v1/security/session-policy`
+- `PATCH /api/v1/security/mfa`
+- `PATCH /api/v1/security/maintenance`
 - `POST /api/v1/security/users/:id/unlock`
-- `POST /api/v1/security/users/:id/force-logout`
+- `POST /api/v1/security/users/:id/revoke-sessions`
+- `POST /api/v1/security/users/:id/mfa`
+- `GET /api/v1/security/trusted-devices`
+- `DELETE /api/v1/security/trusted-devices/:id`
+- `GET /api/admin/security`
+- `GET /api/integrations`
+- `GET /api/integrations/:provider`
+- `POST /api/integrations/:provider/connect`
+- `GET /api/integrations/:provider/callback`
+- `POST /api/integrations/:provider/disconnect`
+- `POST /api/integrations/:provider/test`
+- `PUT /api/integrations/:provider/config`
+- `POST /api/integrations/slack/message`
+- `POST /api/integrations/slack/announcement`
+- `POST /api/integrations/google_workspace/calendar/events`
+- `POST /api/integrations/zoom/meetings`
+- `POST /api/payments/paystack/initialize`
+- `GET /api/payments/paystack/verify/:reference`
+- `POST /api/payments/paystack/transfer`
+- `POST /api/webhooks/paystack`
+- `GET /api/admin/email-config`
+- `PUT /api/admin/email-config`
+- `POST /api/admin/email-config/test`
+- `POST /api/admin/email-config/check`
+- `PATCH /api/admin/email-config/status`
+- `GET /api/admin/email-config/templates`
+- `POST /api/admin/email-config/templates`
+- `GET /api/admin/email-config/logs`
+- `POST /api/admin/email-config/queue/process`
+- `GET /api/admin/notification-config`
+- `PATCH /api/admin/notification-config/channels`
+- `PATCH /api/admin/notification-config/delivery-preferences`
+- `GET /api/admin/notification-config/rules`
+- `PUT /api/admin/notification-config/rules/:type`
+- `GET /api/admin/notification-config/logs`
+- `POST /api/admin/notification-config/queue/process`
+- `GET /api/notifications`
+- `PATCH /api/notifications/:id/read`
+- `PATCH /api/notifications/read-all`
+- `DELETE /api/notifications/:id`
+- `GET /api/notifications/preferences`
+- `PATCH /api/notifications/preferences`
 - `GET /api/v1/system/health`
 - `GET /api/v1/system/settings`
 - `GET /api/v1/system/backups`
@@ -115,6 +172,7 @@ Enterprise modules are exposed with list/create/view/update/delete routes and au
 - `/api/v1/discipline`
 - `/api/v1/announcements`
 - `/api/v1/reports`
+- `/api/v1/accountant`
 - `/api/v1/users`
 - `/api/v1/roles`
 - `/api/v1/permissions`
@@ -131,6 +189,35 @@ Enterprise modules are exposed with list/create/view/update/delete routes and au
 All list endpoints support `page`, `limit`, `q`, field filters, `sortBy`, `sortDirection`, `dateFrom`, and `dateTo`.
 
 The PostgreSQL architecture blueprint is in `src/database/schema.sql`. It defines UUID primary keys, timestamps, core access tables, organization/workforce/HR/operations/finance/system tables, immutable audit-log tables, indexes, and soft-delete columns for records that must not be permanently removed.
+
+The Prisma production schema is in `prisma/schema.prisma`. The current runtime still uses the local JSON store for dependency-light development and tests; the Prisma schema and SQL schema are the migration contract for PostgreSQL.
+
+Seed default roles and permissions:
+
+```bash
+npm run seed:rbac
+```
+
+Architecture notes and the JSON-store-to-Prisma migration path are in `docs/backend-architecture.md`.
+
+## Roles & Permissions
+
+Top-level RBAC routes:
+
+- `GET /api/v1/roles`
+- `GET /api/v1/roles/:id`
+- `POST /api/v1/roles`
+- `PATCH /api/v1/roles/:id`
+- `DELETE /api/v1/roles/:id`
+- `GET /api/v1/permissions`
+- `GET /api/v1/roles/:id/permissions`
+- `PUT /api/v1/roles/:id/permissions`
+
+Role permission changes validate permission keys, protect the Super Admin role, create technical audit events, and record permission-cache invalidation markers.
+
+## Global Search
+
+`GET /api/v1/search?q=term` searches users, employees, departments, tasks, meetings, vendors, bills, expenses, announcements, events, and NYSC/intern records. Results are permission-aware; non-Super Admin users only receive resources their backend permissions allow them to view.
 
 ## Staff Directory
 
@@ -214,3 +301,90 @@ Department relationship feeds:
 - `GET /api/v1/departments/:id/activity`
 
 HOD and assistant HOD assignment requires an existing active employee. Deactivation with active members returns a confirmation response unless the request includes `confirmation: "DEACTIVATE DEPARTMENT"`. Employees are never deleted automatically.
+
+## User Access
+
+`/api/v1/users` is the Super Admin User Access module for account provisioning, roles, permissions, departments, session control, status changes, and account security.
+
+Account types:
+
+- `SUPER_ADMIN`
+- `ADMIN`
+- `STAFF`
+
+User Access routes:
+
+- `GET /api/v1/users/statistics`
+- `GET /api/v1/users`
+- `POST /api/v1/users`
+- `GET /api/v1/users/:id`
+- `PATCH /api/v1/users/:id`
+- `PUT /api/v1/users/:id`
+- `DELETE /api/v1/users/:id`
+- `POST /api/v1/users/:id/lock`
+- `POST /api/v1/users/:id/unlock`
+- `POST /api/v1/users/:id/deactivate`
+- `POST /api/v1/users/:id/reactivate`
+- `POST /api/v1/users/:id/suspend`
+- `POST /api/v1/users/:id/reset-password`
+- `POST /api/v1/users/:id/force-password-change`
+- `POST /api/v1/users/:id/revoke-sessions`
+- `GET /api/v1/users/:id/sessions`
+- `DELETE /api/v1/users/:id/sessions/:sessionId`
+- `GET /api/v1/users/:id/login-history`
+- `GET /api/v1/users/:id/activity`
+
+Security behavior:
+
+- User records never return `passwordHash`, refresh-token hashes, reset tokens, or activation tokens.
+- Created accounts receive hashed temporary credentials and `mustChangePassword`.
+- Super Admin security settings persist password, login lockout, session, MFA, trusted device, and maintenance policies.
+- Password updates are validated against the active policy and password history before hashing.
+- Login attempts and security events are stored for dashboard metrics and audit review.
+- MFA-enabled logins return an MFA challenge before issuing session tokens.
+- Session timeout, concurrent-session limits, admin revocation, and revoke reasons are enforced by the session store.
+- Maintenance mode blocks non-Super Admin authenticated API access with a `503` response.
+- Users with `mustChangePassword` can only access auth/self-service routes until they change password.
+- Lock, deactivate, suspend, and reset-password actions revoke active sessions.
+- Super Admin accounts can only be created or modified by Super Admin.
+- A user cannot lock, deactivate, or delete their own account through normal User Access routes.
+- Login failures are tracked and accounts lock after the configured failed-attempt threshold.
+- User Access actions write append-only operational audit records and user activity records.
+
+## Integrations
+
+`/api/integrations` and `/api/v1/integrations` expose Slack, Google Workspace, Paystack, and Zoom connection management. OAuth providers return authorization URLs from `POST /:provider/connect`, validate callback state, encrypt stored tokens, and never return credentials in API responses.
+
+Integration behavior:
+
+- Credentials are encrypted with `ENCRYPTION_KEY` before persistence.
+- `GET /api/integrations` is the source of truth for frontend card status.
+- Slack message/announcement, Google Calendar/Meet, Zoom meeting, and Paystack payment services are reusable from other modules.
+- Virtual meeting creation can create Google Meet or Zoom meetings when the selected provider is active.
+- Paystack webhooks verify `x-paystack-signature`, update payment state, and ignore duplicate events.
+- Important integration actions write `integration_logs` and Operational Audit records.
+
+## Email Configuration
+
+`/api/admin/email-config`, `/api/v1/email-config`, `/api/v1/email-configurations`, and `/api/v1/email` expose the centralized outbound email control plane. The module supports Postmark and SMTP, encrypted credentials, status checks, test sends, templates, queue processing, delivery logs, and audit records.
+
+Email behavior:
+
+- SMTP passwords, Postmark/API keys, and encrypted credential values are never returned to the frontend.
+- `EmailService.sendEmail()` is the central path for application emails, including password-reset requests.
+- Emails are queued by default and processed through `email_jobs`; failed deliveries retry up to three times before becoming `failed`.
+- Disabled email service records delivery attempts as cancelled/skipped instead of sending.
+- Email config changes, checks, status toggles, template changes, and test sends write Operational and Technical Audit records.
+
+## Notification Configuration
+
+`/api/admin/notification-config`, `/api/v1/notification-config`, and `/api/v1/notification-configurations` control organization-wide notification channels, rules, daily digest, quiet hours, delivery logs, and queue processing. `/api/notifications` and `/api/v1/notifications` power the user notification bell, read/unread state, deletion, and personal preferences.
+
+Notification behavior:
+
+- `NotificationService.send()` is the central path for in-app, email, and SMS notifications.
+- Global channels, notification rules, and user preferences decide final delivery channels.
+- Email notifications call the central Email Service; SMS calls the SMS provider adapter.
+- Quiet hours delay normal/low priority external delivery; urgent/high notifications can still be delivered.
+- Delivery attempts write `notification_delivery_logs` and queue work writes `notification_jobs`.
+- Users can only read/delete their own notifications unless granted organization-wide notification permissions.

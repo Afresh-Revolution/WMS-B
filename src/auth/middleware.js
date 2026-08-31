@@ -2,6 +2,8 @@ const { verifyAccessToken } = require("./tokens");
 const { getUserById, sanitizeUser } = require("./userStore");
 const { getActiveSession, touchSession } = require("./sessionStore");
 const { hasPermission } = require("../constants/rbac");
+const { readCollection } = require("../database/jsonStore");
+const { getActiveSecuritySettings } = require("../modules/security/securityService");
 
 function authenticate(req, res, next) {
   const authHeader = req.get("authorization") || "";
@@ -21,8 +23,34 @@ function authenticate(req, res, next) {
     return res.status(401).json({ error: "User no longer exists." });
   }
 
-  if (user.status === "locked" || user.status === "suspended" || user.lockedAt) {
+  if (String(user.status || "active").toLowerCase() !== "active" || user.lockedAt) {
     return res.status(403).json({ error: "Account is not active." });
+  }
+
+  const canUsePasswordResetRoutes =
+    req.originalUrl.includes("/auth/change-password") ||
+    req.originalUrl.includes("/auth/me") ||
+    req.originalUrl.includes("/auth/logout") ||
+    req.originalUrl.includes("/auth/sessions");
+  if ((user.mustChangePassword || user.forcePasswordReset) && !canUsePasswordResetRoutes) {
+    return res.status(403).json({
+      error: "Password change required.",
+      code: "PASSWORD_CHANGE_REQUIRED",
+    });
+  }
+
+  const securitySettings = getActiveSecuritySettings();
+  if (
+    securitySettings.passwordExpiryEnabled &&
+    user.passwordChangedAt &&
+    Date.now() - new Date(user.passwordChangedAt).getTime() >
+      securitySettings.passwordExpiryDays * 24 * 60 * 60 * 1000 &&
+    !canUsePasswordResetRoutes
+  ) {
+    return res.status(403).json({
+      error: "Password expired.",
+      code: "PASSWORD_EXPIRED",
+    });
   }
 
   if (payload.sid) {
@@ -36,6 +64,27 @@ function authenticate(req, res, next) {
   }
 
   req.user = sanitizeUser(user);
+  const maintenance = readCollection("system_settings").find(
+    (setting) => !setting.deletedAt && (setting.key === "maintenanceMode" || setting.key === "maintenance_mode")
+  );
+  const maintenanceEnabled =
+    securitySettings.maintenanceMode ||
+    (maintenance && (maintenance.value === true || maintenance.value?.enabled === true || maintenance.value?.maintenanceMode === true));
+  if (maintenanceEnabled && req.user.role !== "superadmin") {
+    return res.status(503).json({
+      success: false,
+      message: "System is currently under maintenance.",
+      error: {
+        code: "MAINTENANCE_MODE",
+        details: {
+          message:
+            securitySettings.maintenanceMessage ||
+            maintenance?.value?.message ||
+            "System is currently under maintenance.",
+        },
+      },
+    });
+  }
   return next();
 }
 

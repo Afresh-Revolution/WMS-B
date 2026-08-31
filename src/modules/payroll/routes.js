@@ -168,8 +168,8 @@ payrollRouter.post(
 payrollRouter.post(
   "/runs/:id/process-payment",
   requirePayrollPermission(PAYROLL_PERMISSIONS.PROCESS_PAYMENT),
-  handle((req, res) => {
-    const result = payrollService.processPayment(req.params.id, req.body || {}, req.user);
+  handle(async (req, res) => {
+    const result = await payrollService.processPayment(req.params.id, req.body || {}, req.user, req);
     if (!result) {
       return notFound(res, "PAYROLL_RUN_NOT_FOUND");
     }

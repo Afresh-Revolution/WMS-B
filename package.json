@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "seed:superadmin": "node scripts/seed-superadmin.js",
+    "seed:rbac": "node scripts/seed-rbac.js",
     "db:check": "node scripts/check-db.js",
     "test": "node --test"
   },

@@ -12,6 +12,7 @@ const {
   RESPONSE_STATUS,
 } = require("./constants");
 const { buildSchedule, overlaps } = require("./meeting-scheduling.service");
+const integrationService = require("../integrations/integration.service");
 const repository = require("./meeting.repository");
 
 function createHttpError(statusCode, message, code) {
@@ -299,12 +300,31 @@ function notifyParticipants(meeting, type, title, body) {
   }
 }
 
-function createMeeting(payload, user) {
+function getVirtualProvider(payload = {}, meetingType) {
+  const provider = String(payload.provider || payload.virtualProvider || payload.virtual_provider || "").toLowerCase();
+  const type = String(payload.type || payload.meetingType || meetingType?.code || "").toLowerCase();
+  if (provider === "google_meet" || provider === "google" || provider === "google_workspace") {
+    return "google_meet";
+  }
+  if (provider === "zoom") {
+    return "zoom";
+  }
+  if (type === "virtual" && provider) {
+    return provider;
+  }
+  return null;
+}
+
+async function createMeeting(payload, user, req) {
   assertPermission(user, MEETING_PERMISSIONS.CREATE);
   assertTitle(payload.title);
 
   const meetingType = getMeetingTypeOrThrow(payload.meetingTypeId || payload.meeting_type_id);
-  validateMeetingTypeRequirements(meetingType, payload);
+  const virtualProvider = getVirtualProvider(payload, meetingType);
+  validateMeetingTypeRequirements(meetingType, {
+    ...payload,
+    virtualLink: payload.virtualLink || payload.virtual_link || payload.meetingLink || payload.meeting_link || (virtualProvider ? "integration_pending" : null),
+  });
 
   const schedule = buildSchedule(payload);
   const organizerId = payload.organizerId && user.role === "superadmin" ? payload.organizerId : user.id;
@@ -325,6 +345,45 @@ function createMeeting(payload, user) {
     participantIds,
   });
 
+  let externalMeeting = null;
+  if (virtualProvider === "google_meet") {
+    externalMeeting = await integrationService.createGoogleCalendarEvent(
+      {
+        ...payload,
+        title: payload.title.trim(),
+        date: schedule.date,
+        startTime: schedule.startTime,
+        startAt: schedule.startAt,
+        endAt: schedule.endAt,
+        duration: schedule.durationMinutes,
+        createMeetLink: true,
+      },
+      req || { user }
+    );
+  } else if (virtualProvider === "zoom") {
+    externalMeeting = await integrationService.createZoomMeeting(
+      {
+        ...payload,
+        title: payload.title.trim(),
+        date: schedule.date,
+        startTime: schedule.startTime,
+        startAt: schedule.startAt,
+        endAt: schedule.endAt,
+        duration: schedule.durationMinutes,
+      },
+      req || { user }
+    );
+  } else if (String(payload.type || "").toLowerCase() === "virtual" && (payload.provider || payload.virtualProvider || payload.virtual_provider)) {
+    throw createHttpError(400, "Virtual meeting provider is invalid.", "INVALID_VIRTUAL_PROVIDER");
+  }
+
+  const virtualLink =
+    externalMeeting?.virtualLink ||
+    payload.virtualLink ||
+    payload.virtual_link ||
+    payload.meetingLink ||
+    payload.meeting_link ||
+    null;
   const visibility = normalizeStatus(payload.visibility || (department ? MEETING_VISIBILITY.DEPARTMENT : MEETING_VISIBILITY.PRIVATE));
   const meeting = repository.createMeeting({
     title: payload.title.trim(),
@@ -342,8 +401,11 @@ function createMeeting(payload, user) {
     meetingRoomId,
     meetingRoomName: room?.name || null,
     location: payload.location || room?.location || room?.name || null,
-    virtualLink: payload.virtualLink || payload.virtual_link || payload.meetingLink || payload.meeting_link || null,
-    meetingLink: payload.virtualLink || payload.virtual_link || payload.meetingLink || payload.meeting_link || null,
+    virtualLink,
+    meetingLink: virtualLink,
+    virtualProvider,
+    googleEventId: externalMeeting?.googleEventId || null,
+    zoomMeetingId: externalMeeting?.zoomMeetingId || null,
     organizerId,
     organizerName: getUserName(organizer),
     departmentId: department?.id || null,

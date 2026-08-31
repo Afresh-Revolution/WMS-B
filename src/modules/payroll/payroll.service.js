@@ -2,6 +2,7 @@ const { hasPermission } = require("../../constants/rbac");
 const { queueNotification } = require("../_shared/notificationService");
 const { APPROVAL_STATUS, COMPONENT_TYPE, PAYMENT_STATUS, PAYROLL_PERIOD_STATUS, PAYROLL_PERMISSIONS, PAYROLL_RUN_STATUS } = require("./constants");
 const { calculatePayrollForEmployee, roundMoney } = require("./payroll-calculation.service");
+const integrationService = require("../integrations/integration.service");
 const { validatePayrollReadiness } = require("./payroll-validation.service");
 const repository = require("./payroll.repository");
 
@@ -461,7 +462,7 @@ function rejectRun(id, payload, user) {
   return { oldValues, record: updated };
 }
 
-function processPayment(id, payload, user) {
+async function processPayment(id, payload, user, req) {
   assertPermission(user, PAYROLL_PERMISSIONS.PROCESS_PAYMENT);
   const run = repository.findRun(id);
   if (!run) {
@@ -472,6 +473,50 @@ function processPayment(id, payload, user) {
   }
   const oldValues = run;
   repository.updateRun(id, { status: PAYROLL_RUN_STATUS.PAYMENT_PROCESSING });
+
+  if (String(payload.paymentMethod || payload.payment_method || "").toUpperCase() === "PAYSTACK") {
+    const payments = [];
+    for (const item of repository.listRunItems(id)) {
+      const employee = repository.findEmployee(item.employeeId);
+      const payment = await integrationService.initializePaystackPayment(
+        {
+          amount: item.netSalary,
+          currency: item.currency,
+          email: employee?.email || employee?.personalEmail || employee?.workEmail || `${item.employeeId}@afresh.local`,
+          reference: `${run.reference}-${item.employeeNumber || item.employeeId.slice(0, 8)}`,
+          metadata: {
+            payrollRunId: id,
+            payrollRunItemId: item.id,
+            employeeId: item.employeeId,
+            source: "payroll",
+          },
+        },
+        req || { user }
+      );
+      payments.push(
+        repository.createPayment({
+          payrollRunId: id,
+          employeeId: item.employeeId,
+          payrollRunItemId: item.id,
+          amount: item.netSalary,
+          currency: item.currency,
+          paymentMethod: "PAYSTACK",
+          paymentReference: payment.reference,
+          status: PAYMENT_STATUS.PROCESSING,
+          processedAt: null,
+          failureReason: null,
+          providerMetadata: {
+            authorizationUrl: payment.authorizationUrl || payment.authorization_url || null,
+            accessCode: payment.accessCode || payment.access_code || null,
+          },
+        })
+      );
+    }
+    const updated = repository.updateRun(id, { status: PAYROLL_RUN_STATUS.PAYMENT_PROCESSING });
+    recordHistory({ payrollRunId: id, actor: user, action: "PAYSTACK_PAYMENT_INITIALIZED", oldValues, newValues: { run: updated, payments } });
+    return { oldValues, record: updated, payments };
+  }
+
   const payments = repository.listRunItems(id).map((item) =>
     repository.createPayment({
       payrollRunId: id,

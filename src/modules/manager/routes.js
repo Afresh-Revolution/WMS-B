@@ -1,0 +1,294 @@
+const express = require("express");
+const managerService = require("./service");
+const { authenticate } = require("../../auth/middleware");
+
+const managerRouter = express.Router();
+
+function handle(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+function send(res, message, data, meta = {}) {
+  return res.json({ success: true, message, data, meta });
+}
+
+function notFound(res, code = "RESOURCE_NOT_FOUND") {
+  return res.status(404).json({ success: false, message: "Operation failed", error: { code, details: {} } });
+}
+
+function paged(res, message, result) {
+  return send(res, message, result.data, result.meta);
+}
+
+managerRouter.use(authenticate);
+
+managerRouter.get("/scope", handle((req, res) => send(res, "Manager scope loaded.", managerService.getScopeSummary(req.user))));
+
+managerRouter.get("/dashboard", handle((req, res) => send(res, "Manager dashboard loaded.", managerService.getDashboard(req.user, req.query))));
+managerRouter.get("/dashboard/stats", handle((req, res) => send(res, "Manager dashboard stats loaded.", managerService.getStats(req.user, req.query))));
+
+managerRouter.get("/employment-record", handle((req, res) => send(res, "Manager employment record loaded.", managerService.getSelfEmploymentRecord(req.user))));
+managerRouter.get("/employment-record/documents", handle((req, res) => {
+  const record = managerService.getSelfEmploymentRecord(req.user);
+  return send(res, "Manager employment documents loaded.", record.documents || []);
+}));
+managerRouter.patch("/employment-record", handle((req, res) => send(res, "Manager employment record updated.", managerService.updateSelfEmploymentRecord(req.body || {}, req))));
+managerRouter.put("/employment-record", handle((req, res) => send(res, "Manager employment record updated.", managerService.updateSelfEmploymentRecord(req.body || {}, req))));
+managerRouter.get("/profile", handle((req, res) => send(res, "Manager profile loaded.", managerService.getManagerProfile(req.user))));
+managerRouter.patch("/profile", handle((req, res) => send(res, "Manager profile updated.", managerService.updateManagerProfile(req.body || {}, req))));
+managerRouter.put("/profile", handle((req, res) => send(res, "Manager profile updated.", managerService.updateManagerProfile(req.body || {}, req))));
+managerRouter.get("/settings", handle((req, res) => send(res, "Manager settings loaded.", managerService.getManagerSettings(req.user))));
+managerRouter.patch("/settings", handle((req, res) => send(res, "Manager settings updated.", managerService.updateManagerSettings(req.body || {}, req))));
+managerRouter.get("/help-center", handle((req, res) => send(res, "Manager help center loaded.", managerService.getHelpCenter(req.user))));
+
+managerRouter.get("/employees", handle((req, res) => paged(res, "Manager employees loaded.", managerService.listEmployees(req.user, req.query))));
+managerRouter.get("/team", handle((req, res) => paged(res, "Manager team loaded.", managerService.listEmployees(req.user, req.query))));
+managerRouter.get("/employees/:id", handle((req, res) => {
+  const employee = managerService.getEmployee(req.user, req.params.id);
+  return employee ? send(res, "Manager employee loaded.", employee) : notFound(res, "EMPLOYEE_NOT_FOUND");
+}));
+managerRouter.get("/team/:id", handle((req, res) => {
+  const employee = managerService.getEmployee(req.user, req.params.id);
+  return employee ? send(res, "Manager team member loaded.", employee) : notFound(res, "EMPLOYEE_NOT_FOUND");
+}));
+
+managerRouter.get("/departments", handle((req, res) => paged(res, "Manager departments loaded.", managerService.listDepartments(req.user, req.query))));
+managerRouter.get("/departments/:id", handle((req, res) => {
+  const department = managerService.getDepartment(req.user, req.params.id);
+  return department ? send(res, "Manager department loaded.", department) : notFound(res, "DEPARTMENT_NOT_FOUND");
+}));
+
+managerRouter.get("/leave", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager leave requests loaded.", managerService.listScoped("leave_requests", req.query, scope));
+}));
+managerRouter.post("/leave", handle((req, res) => res.status(201).json({ success: true, message: "Manager leave request created.", data: managerService.createLeave(req.body || {}, req), meta: {} })));
+managerRouter.get("/leave/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("leave_requests", req.params.id, req.user, { permission: "leave.view" });
+  return record ? send(res, "Manager leave request loaded.", record) : notFound(res, "LEAVE_REQUEST_NOT_FOUND");
+}));
+managerRouter.patch("/leave/:id/approve", handle((req, res) => {
+  const result = managerService.updateStatus("leave_requests", req.params.id, "APPROVED", req, { permission: "leave.approve", auditAction: "MANAGER_LEAVE_APPROVED", requirePending: true });
+  return result ? send(res, "Manager leave approved.", result.record) : notFound(res, "LEAVE_REQUEST_NOT_FOUND");
+}));
+managerRouter.patch("/leave/:id/reject", handle((req, res) => {
+  const result = managerService.updateStatus("leave_requests", req.params.id, "REJECTED", req, { permission: "leave.reject", auditAction: "MANAGER_LEAVE_REJECTED", requirePending: true });
+  return result ? send(res, "Manager leave rejected.", result.record) : notFound(res, "LEAVE_REQUEST_NOT_FOUND");
+}));
+
+managerRouter.get("/attendance", handle((req, res) => paged(res, "Manager attendance loaded.", managerService.listAttendance(req.user, req.query))));
+managerRouter.get("/attendance/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("attendance", req.params.id, req.user, { permission: "attendance.view" });
+  return record ? send(res, "Manager attendance record loaded.", record) : notFound(res, "ATTENDANCE_NOT_FOUND");
+}));
+managerRouter.patch("/attendance/:id/correct", handle((req, res) => {
+  const result = managerService.correctAttendance(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager attendance corrected.", result.record) : notFound(res, "ATTENDANCE_NOT_FOUND");
+}));
+
+managerRouter.get("/performance", handle((req, res) => paged(res, "Manager performance reviews loaded.", managerService.listPerformance(req.user, req.query))));
+managerRouter.post("/performance", handle((req, res) => res.status(201).json({ success: true, message: "Manager performance review created.", data: managerService.createPerformanceReview(req.body || {}, req), meta: {} })));
+managerRouter.get("/performance/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("performance_reviews", req.params.id, req.user, { permission: "performance.view", allowCreatedBy: true });
+  return record ? send(res, "Manager performance review loaded.", record) : notFound(res, "PERFORMANCE_REVIEW_NOT_FOUND");
+}));
+managerRouter.patch("/performance/:id", handle((req, res) => {
+  const result = managerService.updatePerformanceReview(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager performance review updated.", result.record) : notFound(res, "PERFORMANCE_REVIEW_NOT_FOUND");
+}));
+managerRouter.put("/performance/:id", handle((req, res) => {
+  const result = managerService.updatePerformanceReview(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager performance review updated.", result.record) : notFound(res, "PERFORMANCE_REVIEW_NOT_FOUND");
+}));
+
+managerRouter.get("/promotions", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager promotions loaded.", managerService.listScoped("promotions", req.query, scope));
+}));
+managerRouter.post("/promotions", handle((req, res) => res.status(201).json({ success: true, message: "Manager promotion recommendation created.", data: managerService.createPromotion(req.body || {}, req), meta: {} })));
+managerRouter.get("/promotions/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("promotions", req.params.id, req.user, { permission: "promotions.view" });
+  return record ? send(res, "Manager promotion loaded.", record) : notFound(res, "PROMOTION_NOT_FOUND");
+}));
+
+managerRouter.get("/salary-recommendations", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager salary recommendations loaded.", managerService.listScoped("salary_adjustments", req.query, scope));
+}));
+managerRouter.post("/salary-recommendations", handle((req, res) => res.status(201).json({ success: true, message: "Manager salary recommendation created.", data: managerService.createSalaryRecommendation(req.body || {}, req), meta: {} })));
+managerRouter.get("/salary-recommendations/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("salary_adjustments", req.params.id, req.user, { permission: "salary_increments.view" });
+  return record ? send(res, "Manager salary recommendation loaded.", record) : notFound(res, "SALARY_RECOMMENDATION_NOT_FOUND");
+}));
+managerRouter.get("/salary", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager salary recommendations loaded.", managerService.listScoped("salary_adjustments", req.query, scope));
+}));
+managerRouter.post("/salary/recommend", handle((req, res) => res.status(201).json({ success: true, message: "Manager salary recommendation created.", data: managerService.createSalaryRecommendation(req.body || {}, req), meta: {} })));
+
+managerRouter.get("/meetings", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager meetings loaded.", managerService.listScoped("meetings", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.post("/meetings", handle((req, res) => res.status(201).json({ success: true, message: "Manager meeting created.", data: managerService.createScopedRecord("meetings", req.body || {}, req, { permission: "meetings.create", auditAction: "MANAGER_MEETING_CREATED" }), meta: {} })));
+managerRouter.get("/meetings/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("meetings", req.params.id, req.user, { permission: "meetings.view", allowCreatedBy: true });
+  return record ? send(res, "Manager meeting loaded.", record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+managerRouter.patch("/meetings/:id/cancel", handle((req, res) => {
+  const result = managerService.cancelMeeting(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager meeting cancelled.", result.record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+managerRouter.patch("/meetings/:id/reschedule", handle((req, res) => {
+  const result = managerService.rescheduleMeeting(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager meeting rescheduled.", result.record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+managerRouter.patch("/meetings/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("meetings", req.params.id, req.body || {}, req, { permission: "meetings.update", allowCreatedBy: true, auditAction: "MANAGER_MEETING_UPDATED" });
+  return result ? send(res, "Manager meeting updated.", result.record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+managerRouter.put("/meetings/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("meetings", req.params.id, req.body || {}, req, { permission: "meetings.update", allowCreatedBy: true, auditAction: "MANAGER_MEETING_UPDATED" });
+  return result ? send(res, "Manager meeting updated.", result.record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+
+managerRouter.get("/tasks", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager tasks loaded.", managerService.listScoped("tasks", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.get("/tasks/overdue", handle((req, res) => paged(res, "Manager overdue tasks loaded.", managerService.listOverdueTasks(req.user, req.query))));
+managerRouter.post("/tasks", handle((req, res) => res.status(201).json({ success: true, message: "Manager task created.", data: managerService.createScopedRecord("tasks", req.body || {}, req, { permission: "tasks.create", defaults: { status: "PENDING" }, auditAction: "MANAGER_TASK_CREATED", notification: { type: "manager_task_created", title: "Task assigned", body: "A task was assigned to you." } }), meta: {} })));
+managerRouter.get("/tasks/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("tasks", req.params.id, req.user, { permission: "tasks.view", allowCreatedBy: true });
+  return record ? send(res, "Manager task loaded.", record) : notFound(res, "TASK_NOT_FOUND");
+}));
+managerRouter.patch("/tasks/:id/complete", handle((req, res) => {
+  const result = managerService.completeTask(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager task completed.", result.record) : notFound(res, "TASK_NOT_FOUND");
+}));
+managerRouter.patch("/tasks/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("tasks", req.params.id, req.body || {}, req, { permission: "tasks.update", allowCreatedBy: true, auditAction: "MANAGER_TASK_UPDATED" });
+  return result ? send(res, "Manager task updated.", result.record) : notFound(res, "TASK_NOT_FOUND");
+}));
+managerRouter.put("/tasks/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("tasks", req.params.id, req.body || {}, req, { permission: "tasks.update", allowCreatedBy: true, auditAction: "MANAGER_TASK_UPDATED" });
+  return result ? send(res, "Manager task updated.", result.record) : notFound(res, "TASK_NOT_FOUND");
+}));
+
+managerRouter.get("/targets", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager targets loaded.", managerService.listScoped("targets", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.post("/targets", handle((req, res) => res.status(201).json({ success: true, message: "Manager target created.", data: managerService.createScopedRecord("targets", req.body || {}, req, { permission: "targets.create", defaults: { status: "ACTIVE" }, auditAction: "MANAGER_TARGET_CREATED", notification: { type: "manager_target_created", title: "Target assigned", body: "A target was assigned to you." } }), meta: {} })));
+managerRouter.get("/targets/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("targets", req.params.id, req.user, { permission: "targets.view", allowCreatedBy: true });
+  return record ? send(res, "Manager target loaded.", record) : notFound(res, "TARGET_NOT_FOUND");
+}));
+managerRouter.patch("/targets/:id/progress", handle((req, res) => {
+  const result = managerService.updateTargetProgress(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager target progress updated.", result.record) : notFound(res, "TARGET_NOT_FOUND");
+}));
+managerRouter.patch("/targets/:id/complete", handle((req, res) => {
+  const result = managerService.completeTarget(req.params.id, req.body || {}, req);
+  return result ? send(res, "Manager target completed.", result.record) : notFound(res, "TARGET_NOT_FOUND");
+}));
+managerRouter.patch("/targets/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("targets", req.params.id, req.body || {}, req, { permission: "targets.update", allowCreatedBy: true, auditAction: "MANAGER_TARGET_UPDATED" });
+  return result ? send(res, "Manager target updated.", result.record) : notFound(res, "TARGET_NOT_FOUND");
+}));
+managerRouter.put("/targets/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("targets", req.params.id, req.body || {}, req, { permission: "targets.update", allowCreatedBy: true, auditAction: "MANAGER_TARGET_UPDATED" });
+  return result ? send(res, "Manager target updated.", result.record) : notFound(res, "TARGET_NOT_FOUND");
+}));
+
+managerRouter.get("/finance", handle((req, res) => paged(res, "Manager finance requests loaded.", managerService.listFinance(req.user, req.query))));
+managerRouter.get("/expenses", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager expenses loaded.", managerService.listScoped("expenses", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.post("/expenses", handle((req, res) => res.status(201).json({ success: true, message: "Manager expense created.", data: managerService.createScopedRecord("expenses", req.body || {}, req, { permission: "expenses.create", defaults: { status: "PENDING" }, auditAction: "MANAGER_EXPENSE_CREATED", notification: { type: "manager_expense_created", title: "Expense request created", body: "An expense request was created for your team." } }), meta: {} })));
+managerRouter.get("/expenses/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("expenses", req.params.id, req.user, { permission: "expenses.view", allowCreatedBy: true });
+  return record ? send(res, "Manager expense loaded.", record) : notFound(res, "EXPENSE_NOT_FOUND");
+}));
+managerRouter.patch("/expenses/:id/approve", handle((req, res) => {
+  const result = managerService.updateStatus("expenses", req.params.id, "APPROVED", req, { permission: "expenses.approve", allowCreatedBy: true, auditAction: "MANAGER_EXPENSE_APPROVED" });
+  return result ? send(res, "Manager expense approved.", result.record) : notFound(res, "EXPENSE_NOT_FOUND");
+}));
+managerRouter.patch("/expenses/:id/reject", handle((req, res) => {
+  const result = managerService.updateStatus("expenses", req.params.id, "REJECTED", req, { permission: "expenses.reject", allowCreatedBy: true, auditAction: "MANAGER_EXPENSE_REJECTED" });
+  return result ? send(res, "Manager expense rejected.", result.record) : notFound(res, "EXPENSE_NOT_FOUND");
+}));
+
+managerRouter.get("/procurement-requests", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager procurement requests loaded.", managerService.listScoped("purchase_requests", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.post("/procurement-requests", handle((req, res) => res.status(201).json({ success: true, message: "Manager procurement request created.", data: managerService.createScopedRecord("purchase_requests", req.body || {}, req, { permission: "procurement.create", defaults: { status: "PENDING" }, auditAction: "MANAGER_PROCUREMENT_REQUEST_CREATED", notification: { type: "manager_procurement_created", title: "Procurement request created", body: "A procurement request was created for your team." } }), meta: {} })));
+managerRouter.get("/procurement-requests/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("purchase_requests", req.params.id, req.user, { permission: "procurement.view", allowCreatedBy: true });
+  return record ? send(res, "Manager procurement request loaded.", record) : notFound(res, "PURCHASE_REQUEST_NOT_FOUND");
+}));
+managerRouter.patch("/procurement-requests/:id/approve", handle((req, res) => {
+  const result = managerService.updateStatus("purchase_requests", req.params.id, "APPROVED", req, { permission: "procurement.approve", allowCreatedBy: true, auditAction: "MANAGER_PROCUREMENT_APPROVED" });
+  return result ? send(res, "Manager procurement request approved.", result.record) : notFound(res, "PURCHASE_REQUEST_NOT_FOUND");
+}));
+managerRouter.patch("/procurement-requests/:id/reject", handle((req, res) => {
+  const result = managerService.updateStatus("purchase_requests", req.params.id, "REJECTED", req, { permission: "purchases.reject", allowCreatedBy: true, auditAction: "MANAGER_PROCUREMENT_REJECTED" });
+  return result ? send(res, "Manager procurement request rejected.", result.record) : notFound(res, "PURCHASE_REQUEST_NOT_FOUND");
+}));
+
+managerRouter.get("/events", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager events loaded.", managerService.listScoped("events", req.query, scope, { allowCreatedBy: true }));
+}));
+managerRouter.post("/events", handle((req, res) => res.status(201).json({ success: true, message: "Manager event created.", data: managerService.createScopedRecord("events", req.body || {}, req, { permission: "events.create", defaults: { status: "DRAFT" }, auditAction: "MANAGER_EVENT_CREATED" }), meta: {} })));
+managerRouter.get("/events/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("events", req.params.id, req.user, { permission: "events.view", allowCreatedBy: true });
+  return record ? send(res, "Manager event loaded.", record) : notFound(res, "EVENT_NOT_FOUND");
+}));
+managerRouter.patch("/events/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("events", req.params.id, req.body || {}, req, { permission: "events.update", allowCreatedBy: true, auditAction: "MANAGER_EVENT_UPDATED" });
+  return result ? send(res, "Manager event updated.", result.record) : notFound(res, "EVENT_NOT_FOUND");
+}));
+managerRouter.put("/events/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("events", req.params.id, req.body || {}, req, { permission: "events.update", allowCreatedBy: true, auditAction: "MANAGER_EVENT_UPDATED" });
+  return result ? send(res, "Manager event updated.", result.record) : notFound(res, "EVENT_NOT_FOUND");
+}));
+
+managerRouter.get("/discipline", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager discipline cases loaded.", managerService.listScoped("disciplinary_cases", req.query, scope));
+}));
+managerRouter.post("/discipline", handle((req, res) => res.status(201).json({ success: true, message: "Manager discipline case created.", data: managerService.createScopedRecord("disciplinary_cases", req.body || {}, req, { permission: "discipline.create", defaults: { status: "OPEN" }, auditAction: "MANAGER_DISCIPLINE_CREATED" }), meta: {} })));
+managerRouter.get("/discipline/:id", handle((req, res) => {
+  const record = managerService.getScopedRecord("disciplinary_cases", req.params.id, req.user, { permission: "discipline.view" });
+  return record ? send(res, "Manager discipline case loaded.", record) : notFound(res, "DISCIPLINE_CASE_NOT_FOUND");
+}));
+managerRouter.patch("/discipline/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("disciplinary_cases", req.params.id, req.body || {}, req, { permission: "discipline.update", auditAction: "MANAGER_DISCIPLINE_UPDATED" });
+  return result ? send(res, "Manager discipline case updated.", result.record) : notFound(res, "DISCIPLINE_CASE_NOT_FOUND");
+}));
+managerRouter.put("/discipline/:id", handle((req, res) => {
+  const result = managerService.writeScopedRecord("disciplinary_cases", req.params.id, req.body || {}, req, { permission: "discipline.update", auditAction: "MANAGER_DISCIPLINE_UPDATED" });
+  return result ? send(res, "Manager discipline case updated.", result.record) : notFound(res, "DISCIPLINE_CASE_NOT_FOUND");
+}));
+managerRouter.patch("/discipline/:id/close", handle((req, res) => {
+  const result = managerService.updateStatus("disciplinary_cases", req.params.id, "CLOSED", req, { permission: "discipline.close", auditAction: "MANAGER_DISCIPLINE_CLOSED" });
+  return result ? send(res, "Manager discipline case closed.", result.record) : notFound(res, "DISCIPLINE_CASE_NOT_FOUND");
+}));
+
+managerRouter.get("/approvals", handle((req, res) => {
+  const scope = managerService.buildScope(req.user);
+  return paged(res, "Manager approval queue loaded.", managerService.buildApprovalQueue(scope, req.query));
+}));
+
+managerRouter.get("/reports", handle((req, res) => send(res, "Manager reports loaded.", managerService.getReports(req.user, req.query))));
+managerRouter.get("/notifications", handle((req, res) => paged(res, "Manager notifications loaded.", managerService.listNotifications(req.user, req.query))));
+managerRouter.patch("/notifications/:id/read", handle((req, res) => {
+  const notification = managerService.markNotificationRead(req.params.id, req);
+  return notification ? send(res, "Manager notification marked as read.", notification) : notFound(res, "NOTIFICATION_NOT_FOUND");
+}));
+managerRouter.get("/audit-logs", handle((req, res) => paged(res, "Manager audit logs loaded.", managerService.listAuditLogs(req.user, req.query))));
+
+module.exports = { managerRouter };

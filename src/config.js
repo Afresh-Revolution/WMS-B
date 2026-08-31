@@ -1,18 +1,71 @@
+const crypto = require("crypto");
+
+function parseBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function parseInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function requireProductionSecret(name, minimumLength = 32) {
+  const value = process.env[name];
+  if (!value || value.length < minimumLength) {
+    throw new Error(`${name} must be set to at least ${minimumLength} characters in production.`);
+  }
+}
+
+function getRuntimeConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+  return {
+    env: process.env.NODE_ENV || "development",
+    isProduction,
+    port: parseInteger(process.env.PORT, 3000),
+    bodyLimit: process.env.REQUEST_BODY_LIMIT || "1mb",
+    requestIdHeader: "x-request-id",
+    trustProxy: parseBoolean(process.env.TRUST_PROXY, isProduction),
+    databaseUrl: process.env.DATABASE_URL || "",
+    requireDatabaseOnReady: parseBoolean(process.env.REQUIRE_DATABASE_ON_READY, isProduction),
+    cors: {
+      origins: parseCsv(process.env.CORS_ORIGIN || process.env.FRONTEND_URL),
+      allowCredentials: parseBoolean(process.env.CORS_CREDENTIALS, true),
+    },
+    rateLimit: {
+      windowMs: parseInteger(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+      max: parseInteger(process.env.RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 600),
+      authMax: parseInteger(process.env.AUTH_RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 30),
+    },
+    shutdownTimeoutMs: parseInteger(process.env.SHUTDOWN_TIMEOUT_MS, 10 * 1000),
+  };
+}
+
 function assertRuntimeConfig() {
   const isProduction = process.env.NODE_ENV === "production";
 
-  if (isProduction && !process.env.AUTH_TOKEN_SECRET) {
-    throw new Error("AUTH_TOKEN_SECRET is required in production.");
-  }
-
-  if (isProduction && !process.env.SUPERADMIN_SETUP_TOKEN) {
-    throw new Error("SUPERADMIN_SETUP_TOKEN is required in production.");
+  if (isProduction) {
+    requireProductionSecret("AUTH_TOKEN_SECRET");
+    requireProductionSecret("SUPERADMIN_SETUP_TOKEN", 24);
+    requireProductionSecret("ENCRYPTION_KEY", 32);
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is required in production.");
+    }
   }
 
   if (!process.env.AUTH_TOKEN_SECRET) {
-    process.env.AUTH_TOKEN_SECRET = "development-only-token-secret-change-me";
+    process.env.AUTH_TOKEN_SECRET = crypto.randomBytes(32).toString("hex");
     console.warn("AUTH_TOKEN_SECRET is not set. Using an insecure development default.");
   }
 }
 
-module.exports = { assertRuntimeConfig };
+module.exports = { assertRuntimeConfig, getRuntimeConfig };

@@ -1,0 +1,77 @@
+const EVENT_STATUS = Object.freeze({
+  DRAFT: "DRAFT",
+  PUBLISHED: "PUBLISHED",
+  ONGOING: "ONGOING",
+  COMPLETED: "COMPLETED",
+  CANCELLED: "CANCELLED",
+  ARCHIVED: "ARCHIVED",
+});
+
+const EVENT_TYPE = Object.freeze({
+  INTERNAL: "INTERNAL",
+  DEPARTMENT: "DEPARTMENT",
+  TRAINING: "TRAINING",
+  WORKSHOP: "WORKSHOP",
+  CONFERENCE: "CONFERENCE",
+  RETREAT: "RETREAT",
+  CELEBRATION: "CELEBRATION",
+  SPONSORSHIP: "SPONSORSHIP",
+  EXTERNAL: "EXTERNAL",
+  OTHER: "OTHER",
+});
+
+const AUDIENCE_TYPE = Object.freeze({
+  ALL_STAFF: "ALL_STAFF",
+  ALL_DEPARTMENTS: "ALL_DEPARTMENTS",
+  SPECIFIC_DEPARTMENT: "SPECIFIC_DEPARTMENT",
+  SPECIFIC_STAFF: "SPECIFIC_STAFF",
+  SPECIFIC_ROLES: "SPECIFIC_ROLES",
+  SPECIFIC_LOCATIONS: "SPECIFIC_LOCATIONS",
+  CUSTOM_GROUP: "CUSTOM_GROUP",
+});
+
+const ATTENDEE_STATUS = Object.freeze({
+  INVITED: "INVITED",
+  GOING: "GOING",
+  MAYBE: "MAYBE",
+  DECLINED: "DECLINED",
+  ATTENDED: "ATTENDED",
+  ABSENT: "ABSENT",
+});
+
+const SPONSORSHIP_TYPE = Object.freeze({
+  PLATINUM: "PLATINUM",
+  GOLD: "GOLD",
+  SILVER: "SILVER",
+  BRONZE: "BRONZE",
+  PARTNER: "PARTNER",
+  MEDIA_PARTNER: "MEDIA_PARTNER",
+  CUSTOM: "CUSTOM",
+});
+
+const EVENT_PERMISSIONS = Object.freeze({
+  VIEW: "event.view",
+  VIEW_ALL: "event.view_all",
+  CREATE: "event.create",
+  UPDATE: "event.update",
+  PUBLISH: "event.publish",
+  CANCEL: "event.cancel",
+  DELETE: "event.delete",
+  MANAGE_AUDIENCE: "event.manage_audience",
+  MANAGE_ATTENDANCE: "event.manage_attendance",
+  CHECKIN: "event.checkin",
+  MANAGE_SPONSORS: "event.manage_sponsors",
+  MANAGE_BUDGET: "event.manage_budget",
+  MANAGE_DOCUMENTS: "event.manage_documents",
+  EXPORT: "event.export",
+  VIEW_REPORTS: "event.view_reports",
+});
+
+module.exports = {
+  ATTENDEE_STATUS,
+  AUDIENCE_TYPE,
+  EVENT_PERMISSIONS,
+  EVENT_STATUS,
+  EVENT_TYPE,
+  SPONSORSHIP_TYPE,
+};

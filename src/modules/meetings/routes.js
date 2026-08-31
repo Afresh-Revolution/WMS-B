@@ -96,8 +96,8 @@ meetingsRouter.get(
 meetingsRouter.post(
   "/",
   requireMeetingPermission(MEETING_PERMISSIONS.CREATE),
-  handle((req, res) => {
-    const result = meetingService.createMeeting(req.body || {}, req.user);
+  handle(async (req, res) => {
+    const result = await meetingService.createMeeting(req.body || {}, req.user, req);
     auditMeeting(req, "MEETING_CREATED", result);
     return res.status(201).json({ success: true, message: "Meeting created.", data: result.record, meta: { warnings: result.warnings } });
   })

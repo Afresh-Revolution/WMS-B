@@ -1,0 +1,1202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+  locked
+  terminated
+  pending
+}
+
+enum AccountType {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+}
+
+enum ApprovalStatus {
+  draft
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+model User {
+  id                       String          @id @default(uuid()) @db.Uuid
+  employeeId               String?         @unique @map("employee_id") @db.Uuid
+  fullName                 String?         @map("full_name")
+  email                    String          @unique
+  username                 String?         @unique
+  phone                    String?
+  passwordHash             String          @map("password_hash")
+  profilePhoto             String?         @map("profile_photo")
+  roleId                   String?         @map("role_id") @db.Uuid
+  departmentId             String?         @map("department_id") @db.Uuid
+  accountType              AccountType     @default(STAFF) @map("account_type")
+  status                   UserStatus      @default(active)
+  permissions              Json            @default("[]")
+  emailVerified            Boolean         @default(false) @map("email_verified")
+  phoneVerified            Boolean         @default(false) @map("phone_verified")
+  mustChangePassword       Boolean         @default(false) @map("must_change_password")
+  failedLoginAttempts      Int             @default(0) @map("failed_login_attempts")
+  lockedUntil              DateTime?       @map("locked_until")
+  lastLoginAt              DateTime?       @map("last_login_at")
+  lastLoginIp              String?         @map("last_login_ip") @db.Inet
+  lastActivityAt           DateTime?       @map("last_activity_at")
+  passwordChangedAt        DateTime?       @map("password_changed_at")
+  emailVerifiedAt          DateTime?       @map("email_verified_at")
+  createdBy                String?         @map("created_by") @db.Uuid
+  updatedBy                String?         @map("updated_by") @db.Uuid
+  deactivatedAt            DateTime?       @map("deactivated_at")
+  deactivatedBy            String?         @map("deactivated_by") @db.Uuid
+  activationTokenHash      String?         @map("activation_token_hash")
+  activationTokenExpiresAt DateTime?       @map("activation_token_expires_at")
+  deletedAt                DateTime?       @map("deleted_at")
+  deletedBy                String?         @map("deleted_by") @db.Uuid
+  createdAt                DateTime        @default(now()) @map("created_at")
+  updatedAt                DateTime        @updatedAt @map("updated_at")
+
+  employee                 Employee?       @relation(fields: [employeeId], references: [id])
+  role                     Role?           @relation(fields: [roleId], references: [id])
+  department               Department?     @relation(fields: [departmentId], references: [id])
+  userRoles                UserRole[]
+  sessions                 UserSession[]
+  loginHistory             LoginHistory[]
+  failedLogins             FailedLogin[]
+  notifications            Notification[]
+  auditLogs                AuditLog[]      @relation("ActorAuditLogs")
+
+  @@index([roleId, status])
+  @@index([departmentId])
+  @@index([accountType, status])
+  @@map("users")
+}
+
+model Role {
+  id           String           @id @default(uuid()) @db.Uuid
+  key          String           @unique
+  name         String
+  description  String?
+  isSystemRole Boolean          @default(false) @map("is_system_role")
+  deletedAt    DateTime?        @map("deleted_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  users        User[]
+  userRoles    UserRole[]
+  permissions  RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  name        String?
+  module      String
+  action      String
+  description String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  roles       RolePermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedBy String?  @map("assigned_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user       User     @relation(fields: [userId], references: [id])
+  role       Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model UserSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  status           String    @default("active")
+  device           String?
+  browser          String?
+  operatingSystem  String?   @map("operating_system")
+  userAgent        String?   @map("user_agent")
+  ipAddress        String?   @map("ip_address") @db.Inet
+  location         String?
+  lastUsedAt       DateTime? @map("last_used_at")
+  expiresAt        DateTime? @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  revokedBy        String?   @map("revoked_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  user             User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, status])
+  @@map("sessions")
+}
+
+model LoginHistory {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  status    String
+  reason    String?
+  device    String?
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address") @db.Inet
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("login_history")
+}
+
+model FailedLogin {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String?
+  userId    String?  @map("user_id") @db.Uuid
+  reason    String?
+  device    String?
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address") @db.Inet
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([email, createdAt])
+  @@map("failed_logins")
+}
+
+model SecuritySetting {
+  id                         String    @id @default(uuid()) @db.Uuid
+  minimumPasswordLength      Int       @default(10) @map("minimum_password_length")
+  requireUppercase           Boolean   @default(true) @map("require_uppercase")
+  requireLowercase           Boolean   @default(true) @map("require_lowercase")
+  requireNumber              Boolean   @default(true) @map("require_number")
+  requireSymbol              Boolean   @default(true) @map("require_symbol")
+  passwordExpiryEnabled      Boolean   @default(false) @map("password_expiry_enabled")
+  passwordExpiryDays         Int       @default(90) @map("password_expiry_days")
+  passwordHistoryEnabled     Boolean   @default(true) @map("password_history_enabled")
+  passwordHistoryCount       Int       @default(5) @map("password_history_count")
+  requireMfa                 Boolean   @default(false) @map("require_mfa")
+  allowEmailMfa              Boolean   @default(true) @map("allow_email_mfa")
+  allowAuthenticatorMfa      Boolean   @default(true) @map("allow_authenticator_mfa")
+  maxLoginAttempts           Int       @default(5) @map("max_login_attempts")
+  lockoutDurationMinutes     Int       @default(30) @map("lockout_duration_minutes")
+  sessionTimeoutMinutes      Int       @default(60) @map("session_timeout_minutes")
+  maxConcurrentSessions      Int       @default(5) @map("max_concurrent_sessions")
+  allowRememberDevice        Boolean   @default(true) @map("allow_remember_device")
+  maintenanceMode            Boolean   @default(false) @map("maintenance_mode")
+  maintenanceMessage         String?   @map("maintenance_message")
+  active                     Boolean   @default(true)
+  updatedBy                  String?   @map("updated_by") @db.Uuid
+  deletedAt                  DateTime? @map("deleted_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+
+  @@map("security_settings")
+}
+
+model PasswordHistory {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("password_history")
+}
+
+model UserMfa {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  method          String
+  secretEncrypted String?   @map("secret_encrypted")
+  enabled         Boolean   @default(false)
+  verified        Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+
+  @@unique([userId, method])
+  @@map("user_mfa")
+}
+
+model MfaChallenge {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  method         String
+  otpHash        String    @map("otp_hash")
+  status         String    @default("pending")
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  expiresAt      DateTime  @map("expires_at")
+  verifiedAt     DateTime? @map("verified_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("mfa_challenges")
+}
+
+model LoginAttempt {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String?  @map("user_id") @db.Uuid
+  email         String?
+  ipAddress     String?  @map("ip_address") @db.Inet
+  userAgent     String?  @map("user_agent")
+  successful    Boolean  @default(false)
+  failureReason String?  @map("failure_reason")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([email, createdAt])
+  @@index([userId, createdAt])
+  @@map("login_attempts")
+}
+
+model TrustedDevice {
+  id                   String    @id @default(uuid()) @db.Uuid
+  userId               String    @map("user_id") @db.Uuid
+  deviceIdentifierHash String    @map("device_identifier_hash")
+  deviceName           String?   @map("device_name")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  expiresAt            DateTime  @map("expires_at")
+  revokedAt            DateTime? @map("revoked_at")
+  lastUsedAt           DateTime? @map("last_used_at")
+
+  @@index([userId, revokedAt])
+  @@map("trusted_devices")
+}
+
+model SecurityEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  action      String
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  targetId    String?  @map("target_id") @db.Uuid
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  userAgent   String?  @map("user_agent")
+  outcome     String   @default("success")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([action, createdAt])
+  @@map("security_events")
+}
+
+model Employer {
+  id                 String       @id @default(uuid()) @db.Uuid
+  companyName        String       @map("company_name")
+  registrationNumber String?      @map("registration_number")
+  taxInformation     Json         @default("{}") @map("tax_information")
+  companyEmail       String?      @map("company_email")
+  phone              String?
+  website            String?
+  logoFileId         String?      @map("logo_file_id") @db.Uuid
+  address            String?
+  workingHours       Json         @default("{}") @map("working_hours")
+  currency           String?
+  timezone           String?
+  companyPolicies    Json         @default("{}") @map("company_policies")
+  deletedAt          DateTime?    @map("deleted_at")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  branches           Branch[]
+
+  @@map("employers")
+}
+
+model Branch {
+  id         String       @id @default(uuid()) @db.Uuid
+  employerId String?      @map("employer_id") @db.Uuid
+  name       String
+  address    String?
+  location   String?
+  status     String       @default("active")
+  deletedAt  DateTime?    @map("deleted_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  employer   Employer?    @relation(fields: [employerId], references: [id])
+  departments Department[]
+
+  @@map("branches")
+}
+
+model Department {
+  id             String      @id @default(uuid()) @db.Uuid
+  branchId       String?     @map("branch_id") @db.Uuid
+  name           String
+  code           String      @unique
+  description    String?
+  hodId          String?     @map("hod_id") @db.Uuid
+  assistantHodId String?     @map("assistant_hod_id") @db.Uuid
+  location       String?
+  email          String?
+  phone          String?
+  budget         Decimal?    @db.Decimal(14, 2)
+  status         String      @default("active")
+  deletedAt      DateTime?   @map("deleted_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  branch         Branch?     @relation(fields: [branchId], references: [id])
+  users          User[]
+  employees      Employee[]
+  interns        Intern[]
+  nyscMembers    NyscMember[]
+  positions      Position[]
+  tasks          Task[]
+  targets        Target[]
+  expenses       Expense[]
+  purchases      PurchaseRequest[]
+
+  @@index([status, hodId])
+  @@map("departments")
+}
+
+model Position {
+  id           String      @id @default(uuid()) @db.Uuid
+  departmentId String?     @map("department_id") @db.Uuid
+  title        String
+  level        String?
+  deletedAt    DateTime?   @map("deleted_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  department   Department? @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+
+  @@map("positions")
+}
+
+model Employee {
+  id               String       @id @default(uuid()) @db.Uuid
+  userId           String?      @map("user_id") @db.Uuid
+  employeeNumber   String       @unique @map("employee_number")
+  firstName        String?      @map("first_name")
+  lastName         String?      @map("last_name")
+  fullName         String?      @map("full_name")
+  email            String?
+  phone            String?
+  dateOfBirth      DateTime?    @map("date_of_birth")
+  gender           String?
+  address          String?
+  employmentDate   DateTime?    @map("employment_date")
+  employmentType   String?      @map("employment_type")
+  jobTitle         String?      @map("job_title")
+  departmentId     String?      @map("department_id") @db.Uuid
+  positionId       String?      @map("position_id") @db.Uuid
+  supervisorId     String?      @map("supervisor_id") @db.Uuid
+  salary           Decimal?     @db.Decimal(14, 2)
+  status           String       @default("active")
+  emergencyContact Json         @default("{}") @map("emergency_contact")
+  bankInformation  Json         @default("{}") @map("bank_information")
+  taxInformation   Json         @default("{}") @map("tax_information")
+  deletedAt        DateTime?    @map("deleted_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  user             User?
+  department       Department?  @relation(fields: [departmentId], references: [id])
+  position         Position?    @relation(fields: [positionId], references: [id])
+  leaveRequests    LeaveRequest[]
+  expenses         Expense[]
+  payrollItems     PayrollItem[]
+  disciplinaryCases DisciplinaryCase[]
+
+  @@index([departmentId, status])
+  @@index([email])
+  @@map("employees")
+}
+
+model LeaveType {
+  id               String         @id @default(uuid()) @db.Uuid
+  name             String
+  description      String?
+  daysAllowed      Int?           @map("days_allowed")
+  requiresApproval Boolean        @default(true) @map("requires_approval")
+  status           String         @default("active")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  requests         LeaveRequest[]
+  balances         LeaveBalance[]
+
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id             String    @id @default(uuid()) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  leaveTypeId    String    @map("leave_type_id") @db.Uuid
+  allocatedDays  Decimal   @default(0) @map("allocated_days") @db.Decimal(8, 2)
+  usedDays       Decimal   @default(0) @map("used_days") @db.Decimal(8, 2)
+  remainingDays  Decimal   @default(0) @map("remaining_days") @db.Decimal(8, 2)
+  year           Int
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id              String         @id @default(uuid()) @db.Uuid
+  employeeId      String         @map("employee_id") @db.Uuid
+  leaveTypeId     String         @map("leave_type_id") @db.Uuid
+  startDate       DateTime       @map("start_date")
+  endDate         DateTime       @map("end_date")
+  numberOfDays    Decimal        @map("number_of_days") @db.Decimal(8, 2)
+  reason          String?
+  status          ApprovalStatus @default(pending)
+  submittedAt     DateTime       @default(now()) @map("submitted_at")
+  approvedBy      String?        @map("approved_by") @db.Uuid
+  approvedAt      DateTime?      @map("approved_at")
+  rejectionReason String?        @map("rejection_reason")
+  deletedAt       DateTime?      @map("deleted_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+  leaveType       LeaveType      @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([status, submittedAt])
+  @@map("leave_requests")
+}
+
+model Task {
+  id           String      @id @default(uuid()) @db.Uuid
+  title        String
+  description  String?
+  assignedTo   String?     @map("assigned_to") @db.Uuid
+  createdBy    String?     @map("created_by") @db.Uuid
+  departmentId String?     @map("department_id") @db.Uuid
+  priority     String?
+  dueDate      DateTime?   @map("due_date")
+  status       String      @default("todo")
+  completedAt  DateTime?   @map("completed_at")
+  deletedAt    DateTime?   @map("deleted_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([status, dueDate])
+  @@map("tasks")
+}
+
+model Target {
+  id           String      @id @default(uuid()) @db.Uuid
+  title        String
+  description  String?
+  employeeId   String?     @map("employee_id") @db.Uuid
+  departmentId String?     @map("department_id") @db.Uuid
+  targetType   String      @map("target_type")
+  targetValue  Decimal     @default(0) @map("target_value") @db.Decimal(14, 2)
+  currentValue Decimal     @default(0) @map("current_value") @db.Decimal(14, 2)
+  startDate    DateTime?   @map("start_date")
+  endDate      DateTime?   @map("end_date")
+  status       String      @default("active")
+  createdBy    String?     @map("created_by") @db.Uuid
+  deletedAt    DateTime?   @map("deleted_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([departmentId, status])
+  @@map("targets")
+}
+
+model PayrollRun {
+  id          String        @id @default(uuid()) @db.Uuid
+  period      String
+  status      String        @default("draft")
+  approvedBy  String?       @map("approved_by") @db.Uuid
+  processedAt DateTime?     @map("processed_at")
+  deletedAt   DateTime?     @map("deleted_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  items       PayrollItem[]
+
+  @@map("payroll")
+}
+
+model PayrollItem {
+  id          String     @id @default(uuid()) @db.Uuid
+  payrollId   String     @map("payroll_id") @db.Uuid
+  employeeId  String     @map("employee_id") @db.Uuid
+  basicSalary Decimal    @default(0) @map("basic_salary") @db.Decimal(14, 2)
+  allowances  Decimal    @default(0) @db.Decimal(14, 2)
+  bonuses     Decimal    @default(0) @db.Decimal(14, 2)
+  deductions  Decimal    @default(0) @db.Decimal(14, 2)
+  tax         Decimal    @default(0) @db.Decimal(14, 2)
+  pension     Decimal    @default(0) @db.Decimal(14, 2)
+  overtime    Decimal    @default(0) @db.Decimal(14, 2)
+  loans       Decimal    @default(0) @db.Decimal(14, 2)
+  netSalary   Decimal    @default(0) @map("net_salary") @db.Decimal(14, 2)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  payroll     PayrollRun @relation(fields: [payrollId], references: [id])
+  employee    Employee   @relation(fields: [employeeId], references: [id])
+
+  @@map("payroll_items")
+}
+
+model PurchaseRequest {
+  id              String      @id @default(uuid()) @db.Uuid
+  reference       String?     @unique
+  requesterId     String?     @map("requester_id") @db.Uuid
+  departmentId    String?     @map("department_id") @db.Uuid
+  itemDescription String?     @map("item_description")
+  quantity        Decimal?    @db.Decimal(14, 2)
+  estimatedAmount Decimal?    @map("estimated_amount") @db.Decimal(14, 2)
+  reason          String?
+  status          String      @default("draft")
+  approvedBy      String?     @map("approved_by") @db.Uuid
+  approvedAt      DateTime?   @map("approved_at")
+  rejectedBy      String?     @map("rejected_by") @db.Uuid
+  rejectionReason String?     @map("rejection_reason")
+  deletedAt       DateTime?   @map("deleted_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  department      Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([departmentId, status])
+  @@map("purchase_requests")
+}
+
+model Vendor {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  category    String?
+  email       String?
+  phone       String?
+  address     String?
+  taxId       String?  @map("tax_id")
+  bankDetails Json     @default("{}") @map("bank_details")
+  status      String   @default("active")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  bills       Bill[]
+
+  @@map("vendors")
+}
+
+model Bill {
+  id               String    @id @default(uuid()) @db.Uuid
+  vendorId         String?   @map("vendor_id") @db.Uuid
+  invoiceNumber    String    @map("invoice_number")
+  amount           Decimal   @db.Decimal(14, 2)
+  dueDate          DateTime? @map("due_date")
+  category         String?
+  status           String    @default("pending")
+  uploadedDocument String?   @map("uploaded_document")
+  approvedBy       String?   @map("approved_by") @db.Uuid
+  paidAt           DateTime? @map("paid_at")
+  deletedAt        DateTime? @map("deleted_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  vendor           Vendor?   @relation(fields: [vendorId], references: [id])
+
+  @@unique([vendorId, invoiceNumber])
+  @@map("bills")
+}
+
+model Expense {
+  id              String      @id @default(uuid()) @db.Uuid
+  employeeId      String?     @map("employee_id") @db.Uuid
+  departmentId    String?     @map("department_id") @db.Uuid
+  description     String?
+  amount          Decimal     @db.Decimal(14, 2)
+  date            DateTime?
+  category        String?
+  notes           String?
+  receiptUrl      String?     @map("receipt_url")
+  status          String      @default("submitted")
+  reviewedBy      String?     @map("reviewed_by") @db.Uuid
+  approvedAt      DateTime?   @map("approved_at")
+  rejectionReason String?     @map("rejection_reason")
+  deletedAt       DateTime?   @map("deleted_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  employee        Employee?   @relation(fields: [employeeId], references: [id])
+  department      Department? @relation(fields: [departmentId], references: [id])
+
+  @@index([status, date])
+  @@map("expenses")
+}
+
+model Meeting {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  date        DateTime?
+  startTime   String?  @map("start_time")
+  duration    Int?
+  meetingType String?  @map("meeting_type")
+  location    String?
+  virtualLink String?  @map("virtual_link")
+  agenda      String?
+  organizerId String?  @map("organizer_id") @db.Uuid
+  status      String   @default("scheduled")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("meetings")
+}
+
+model Event {
+  id             String    @id @default(uuid()) @db.Uuid
+  title          String
+  type           String?
+  date           DateTime?
+  location       String?
+  description    String?
+  targetAudience Json      @default("{}") @map("target_audience")
+  createdBy      String?   @map("created_by") @db.Uuid
+  status         String    @default("draft")
+  publishedAt    DateTime? @map("published_at")
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("events")
+}
+
+model DisciplinaryCase {
+  id           String    @id @default(uuid()) @db.Uuid
+  employeeId   String?   @map("employee_id") @db.Uuid
+  actionType   String?   @map("action_type")
+  description  String?
+  incidentDate DateTime? @map("incident_date")
+  issuedBy     String?   @map("issued_by") @db.Uuid
+  status       String    @default("open")
+  resolution   String?
+  closedBy     String?   @map("closed_by") @db.Uuid
+  closedAt     DateTime? @map("closed_at")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  employee     Employee? @relation(fields: [employeeId], references: [id])
+
+  @@map("disciplinary_cases")
+}
+
+model Intern {
+  id                String      @id @default(uuid()) @db.Uuid
+  userId            String?     @map("user_id") @db.Uuid
+  fullName          String      @map("full_name")
+  institution       String?
+  courseOfStudy     String?     @map("course_of_study")
+  departmentId      String?     @map("department_id") @db.Uuid
+  supervisorId      String?     @map("supervisor_id") @db.Uuid
+  startDate         DateTime?   @map("start_date")
+  endDate           DateTime?   @map("end_date")
+  status            String      @default("active")
+  placementProgress Decimal     @default(0) @map("placement_progress") @db.Decimal(8, 2)
+  deletedAt         DateTime?   @map("deleted_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  department        Department? @relation(fields: [departmentId], references: [id])
+
+  @@map("interns")
+}
+
+model NyscMember {
+  id                String      @id @default(uuid()) @db.Uuid
+  userId            String?     @map("user_id") @db.Uuid
+  fullName          String      @map("full_name")
+  institution       String?
+  courseOfStudy     String?     @map("course_of_study")
+  departmentId      String?     @map("department_id") @db.Uuid
+  supervisorId      String?     @map("supervisor_id") @db.Uuid
+  startDate         DateTime?   @map("start_date")
+  endDate           DateTime?   @map("end_date")
+  status            String      @default("active")
+  placementProgress Decimal     @default(0) @map("placement_progress") @db.Decimal(8, 2)
+  deletedAt         DateTime?   @map("deleted_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  department        Department? @relation(fields: [departmentId], references: [id])
+
+  @@map("nysc_members")
+}
+
+model Announcement {
+  id          String    @id @default(uuid()) @db.Uuid
+  title       String
+  category    String?
+  message     String?
+  audience    Json      @default("{}")
+  createdBy   String?   @map("created_by") @db.Uuid
+  isPinned    Boolean   @default(false) @map("is_pinned")
+  status      String    @default("draft")
+  publishedAt DateTime? @map("published_at")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  recipients  AnnouncementRecipient[]
+
+  @@map("announcements")
+}
+
+model AnnouncementRecipient {
+  id             String       @id @default(uuid()) @db.Uuid
+  announcementId String       @map("announcement_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  readAt         DateTime?    @map("read_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  announcement   Announcement @relation(fields: [announcementId], references: [id])
+
+  @@unique([announcementId, userId])
+  @@map("announcement_recipients")
+}
+
+model Notification {
+  id                  String    @id @default(uuid()) @db.Uuid
+  recipientId         String?   @map("recipient_id") @db.Uuid
+  userId              String?   @map("user_id") @db.Uuid
+  recipientUserId     String?   @map("recipient_user_id") @db.Uuid
+  recipientEmployeeId String?   @map("recipient_employee_id") @db.Uuid
+  type                String
+  title               String
+  message             String?
+  body                String?
+  module              String?
+  entityType          String?   @map("entity_type")
+  entityId            String?   @map("entity_id")
+  referenceType       String?   @map("reference_type")
+  referenceId         String?   @map("reference_id")
+  priority            String    @default("normal")
+  isRead              Boolean   @default(false) @map("is_read")
+  data                Json      @default("{}")
+  readAt              DateTime? @map("read_at")
+  expiresAt           DateTime? @map("expires_at")
+  deletedAt           DateTime? @map("deleted_at")
+  deletedBy           String?   @map("deleted_by") @db.Uuid
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  user                User?     @relation(fields: [userId], references: [id])
+  deliveryLogs        NotificationDeliveryLog[]
+  jobs                NotificationJob[]
+
+  @@index([userId, isRead, createdAt])
+  @@index([entityType, entityId])
+  @@map("notifications")
+}
+
+model NotificationChannel {
+  id        String   @id @default(uuid()) @db.Uuid
+  channel   String   @unique
+  isEnabled Boolean  @default(true) @map("is_enabled")
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_channels")
+}
+
+model NotificationRule {
+  id               String   @id @default(uuid()) @db.Uuid
+  notificationType String   @unique @map("notification_type")
+  inAppEnabled    Boolean  @default(true) @map("in_app_enabled")
+  emailEnabled    Boolean  @default(true) @map("email_enabled")
+  smsEnabled      Boolean  @default(false) @map("sms_enabled")
+  priority         String   @default("normal")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedBy        String?  @map("updated_by") @db.Uuid
+
+  @@map("notification_rules")
+}
+
+model NotificationPreference {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @map("user_id") @db.Uuid
+  dailyDigestEnabled  Boolean  @default(true) @map("daily_digest_enabled")
+  dailyDigestTime     String   @default("08:00") @map("daily_digest_time")
+  quietHoursEnabled   Boolean  @default(false) @map("quiet_hours_enabled")
+  quietHoursStart     String   @default("22:00") @map("quiet_hours_start")
+  quietHoursEnd       String   @default("07:00") @map("quiet_hours_end")
+  channelPreferences  Json     @default("{}") @map("channel_preferences")
+  typePreferences     Json     @default("{}") @map("type_preferences")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_preferences")
+}
+
+model NotificationDeliveryLog {
+  id                String        @id @default(uuid()) @db.Uuid
+  notificationId    String?       @map("notification_id") @db.Uuid
+  userId            String?       @map("user_id") @db.Uuid
+  channel           String
+  provider          String?
+  status            String        @default("queued")
+  providerMessageId String?       @map("provider_message_id")
+  errorMessage      String?       @map("error_message")
+  attemptCount      Int           @default(0) @map("attempt_count")
+  sentAt            DateTime?     @map("sent_at")
+  deliveredAt       DateTime?     @map("delivered_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  notification      Notification? @relation(fields: [notificationId], references: [id])
+
+  @@index([notificationId, channel, status])
+  @@map("notification_delivery_logs")
+}
+
+model NotificationJob {
+  id             String        @id @default(uuid()) @db.Uuid
+  notificationId String?       @map("notification_id") @db.Uuid
+  userId         String?       @map("user_id") @db.Uuid
+  channel        String
+  payload        Json          @default("{}")
+  status         String        @default("queued")
+  retryCount     Int           @default(0) @map("retry_count")
+  maxRetries     Int           @default(3) @map("max_retries")
+  nextRunAt      DateTime?     @map("next_run_at")
+  sentAt         DateTime?     @map("sent_at")
+  lastError      String?       @map("last_error")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  notification   Notification? @relation(fields: [notificationId], references: [id])
+
+  @@index([status, nextRunAt])
+  @@map("notification_jobs")
+}
+
+model AuditLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  action      String
+  module      String
+  targetType  String?   @map("target_type")
+  targetId    String?   @map("target_id") @db.Uuid
+  targetName  String?   @map("target_name")
+  oldValues   Json?     @map("old_values")
+  newValues   Json?     @map("new_values")
+  ipAddress   String?   @map("ip_address") @db.Inet
+  userAgent   String?   @map("user_agent")
+  requestId   String?   @map("request_id")
+  timestamp   DateTime  @default(now())
+  outcome     String    @default("SUCCESS")
+
+  actor       User?     @relation("ActorAuditLogs", fields: [actorUserId], references: [id])
+
+  @@index([module, timestamp])
+  @@map("audit_logs")
+}
+
+model TechnicalAuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  requestId      String?  @map("request_id")
+  userId         String?  @map("user_id") @db.Uuid
+  ip             String?  @db.Inet
+  endpoint       String?
+  method         String?
+  statusCode     Int?     @map("status_code")
+  responseTimeMs Int?     @map("response_time_ms")
+  service        String?
+  error          Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([service, createdAt])
+  @@map("technical_audit_logs")
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String
+  value       Json
+  type        String?
+  category    String?
+  description String?
+  updatedBy   String?  @map("updated_by") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([category, key])
+  @@map("system_settings")
+}
+
+model EmailConfiguration {
+  id                    String    @id @default(uuid()) @db.Uuid
+  provider              String?
+  emailProvider         String?   @map("email_provider")
+  providerStatus        String?   @map("provider_status")
+  fromName              String?   @map("from_name")
+  fromEmail             String?   @map("from_email")
+  fromAddress           String?   @map("from_address")
+  smtpHost              String?   @map("smtp_host")
+  smtpPort              Int?      @map("smtp_port")
+  smtpUsername          String?   @map("smtp_username")
+  smtpPasswordEncrypted String?   @map("smtp_password_encrypted")
+  apiKeyEncrypted       String?   @map("api_key_encrypted")
+  encryptionType        String?   @map("encryption_type")
+  isEnabled             Boolean   @default(false) @map("is_enabled")
+  status                String    @default("inactive")
+  lastCheckedAt         DateTime? @map("last_checked_at")
+  updatedBy             String?   @map("updated_by") @db.Uuid
+  deletedAt             DateTime? @map("deleted_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@index([provider, status])
+  @@map("email_configurations")
+}
+
+model EmailLog {
+  id           String    @id @default(uuid()) @db.Uuid
+  recipient    String
+  sender       String?
+  subject      String?
+  templateId   String?   @map("template_id") @db.Uuid
+  template     String?
+  provider     String?
+  status       String    @default("queued")
+  messageId    String?   @map("message_id")
+  errorMessage String?   @map("error_message")
+  retryCount   Int       @default(0) @map("retry_count")
+  queuedAt     DateTime? @map("queued_at")
+  sentAt       DateTime? @map("sent_at")
+  deliveredAt  DateTime? @map("delivered_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  jobs         EmailJob[]
+
+  @@index([status, createdAt])
+  @@index([recipient, createdAt])
+  @@map("email_logs")
+}
+
+model EmailJob {
+  id          String    @id @default(uuid()) @db.Uuid
+  logId       String?   @map("log_id") @db.Uuid
+  payload     Json      @default("{}")
+  status      String    @default("queued")
+  retryCount  Int       @default(0) @map("retry_count")
+  maxRetries  Int       @default(3) @map("max_retries")
+  nextRunAt   DateTime? @map("next_run_at")
+  lockedAt    DateTime? @map("locked_at")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  log         EmailLog? @relation(fields: [logId], references: [id])
+
+  @@index([status, nextRunAt])
+  @@map("email_jobs")
+}
+
+model EmailTemplate {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  subject      String
+  body         String
+  templateType String    @map("template_type")
+  type         String?
+  isActive     Boolean   @default(true) @map("is_active")
+  createdBy    String?   @map("created_by") @db.Uuid
+  updatedBy    String?   @map("updated_by") @db.Uuid
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([templateType, isActive])
+  @@map("email_templates")
+}
+
+model Integration {
+  id                String    @id @default(uuid()) @db.Uuid
+  provider          String    @unique
+  name              String
+  description       String?
+  status            String    @default("inactive")
+  connectedBy       String?   @map("connected_by") @db.Uuid
+  accountEmail      String?   @map("account_email")
+  externalAccountId String?   @map("external_account_id")
+  accessToken       String?   @map("access_token")
+  refreshToken      String?   @map("refresh_token")
+  apiKey            String?   @map("api_key")
+  config            Json      @default("{}")
+  encryptedSecret   String?   @map("encrypted_secret")
+  configuration     Json      @default("{}")
+  connectedAt       DateTime? @map("connected_at")
+  disconnectedAt    DateTime? @map("disconnected_at")
+  lastTestedAt      DateTime? @map("last_tested_at")
+  expiresAt         DateTime? @map("expires_at")
+  lastSync          DateTime? @map("last_sync")
+  deletedAt         DateTime? @map("deleted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  logs              IntegrationLog[]
+
+  @@map("integrations")
+}
+
+model IntegrationLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  integrationId String?     @map("integration_id") @db.Uuid
+  provider      String
+  action        String
+  status        String
+  message       String?
+  errorCode     String?     @map("error_code")
+  responseCode  Int?        @map("response_code")
+  performedBy   String?     @map("performed_by") @db.Uuid
+  metadata      Json        @default("{}")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  integration   Integration? @relation(fields: [integrationId], references: [id])
+
+  @@index([provider, createdAt])
+  @@map("integration_logs")
+}
+
+model IntegrationOauthState {
+  id        String    @id @default(uuid()) @db.Uuid
+  provider  String
+  state     String    @unique
+  userId    String?   @map("user_id") @db.Uuid
+  usedAt    DateTime? @map("used_at")
+  usedBy    String?   @map("used_by") @db.Uuid
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([state, expiresAt])
+  @@map("integration_oauth_states")
+}
+
+model Payment {
+  id               String    @id @default(uuid()) @db.Uuid
+  provider         String
+  reference        String    @unique
+  amount           Decimal?  @db.Decimal(14, 2)
+  currency         String    @default("NGN")
+  email            String?
+  status           String    @default("pending")
+  authorizationUrl String?   @map("authorization_url")
+  accessCode       String?   @map("access_code")
+  metadata         Json      @default("{}")
+  createdBy        String?   @map("created_by") @db.Uuid
+  verifiedAt       DateTime? @map("verified_at")
+  webhookEvent     String?   @map("webhook_event")
+  deletedAt        DateTime? @map("deleted_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([reference, status])
+  @@map("payments")
+}
+
+model PaystackWebhookEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  eventId     String   @unique @map("event_id")
+  event       String?
+  reference   String?
+  payload     Json     @default("{}")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("paystack_webhook_events")
+}
+
+model DocumentTemplate {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  type      String
+  content   String?
+  body      String?
+  variables Json      @default("[]")
+  version   Int       @default(1)
+  status    String    @default("active")
+  createdBy String?   @map("created_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("document_templates")
+}
+
+model Backup {
+  id           String    @id @default(uuid()) @db.Uuid
+  backupType   String?   @map("backup_type")
+  fileLocation String?   @map("file_location")
+  size         BigInt?
+  status       String
+  createdBy    String?   @map("created_by") @db.Uuid
+  completedAt  DateTime? @map("completed_at")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("backups")
+}
+
+model File {
+  id         String   @id @default(uuid()) @db.Uuid
+  ownerType  String?  @map("owner_type")
+  ownerId    String?  @map("owner_id") @db.Uuid
+  filename   String
+  mimeType   String?  @map("mime_type")
+  sizeBytes  BigInt?  @map("size_bytes")
+  storageKey String   @map("storage_key")
+  checksum   String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("files")
+}

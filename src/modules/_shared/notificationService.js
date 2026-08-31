@@ -1,19 +1,17 @@
-const crypto = require("crypto");
-const { appendRecord } = require("../../database/jsonStore");
+const notificationService = require("../notifications/notification.service");
 
 function queueNotification({ recipientUserId, recipientEmployeeId, type, title, body, data }) {
-  return appendRecord("notifications", {
-    id: crypto.randomUUID(),
+  const result = notificationService.send({
+    userId: recipientUserId || null,
     recipientUserId: recipientUserId || null,
     recipientEmployeeId: recipientEmployeeId || null,
-    type: type || "in_app",
+    type,
     title,
+    message: body,
     body,
     data: data || {},
-    status: "queued",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   });
+  return result.notification;
 }
 
 module.exports = { queueNotification };

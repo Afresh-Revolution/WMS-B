@@ -340,6 +340,10 @@ function isAuthorizedApprover(request, user) {
     return false;
   }
 
+  if (user?.role === "hr") {
+    return true;
+  }
+
   const actorEmployee = getActorEmployee(user);
   const employee = repository.findEmployeeById(request.employeeId);
   return Boolean(actorEmployee && employee && (employee.managerId === actorEmployee.id || employee.manager_id === actorEmployee.id));
