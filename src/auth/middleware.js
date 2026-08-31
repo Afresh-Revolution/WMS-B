@@ -1,11 +1,16 @@
 const { verifyAccessToken } = require("./tokens");
 const { getUserById, sanitizeUser } = require("./userStore");
+const postgresUserStore = require("./postgresUserStore");
 const { getActiveSession, touchSession } = require("./sessionStore");
 const { hasPermission } = require("../constants/rbac");
 const { readCollection } = require("../database/jsonStore");
 const { getActiveSecuritySettings } = require("../modules/security/securityService");
 
-function authenticate(req, res, next) {
+async function findAuthenticatedUser(id) {
+  return postgresUserStore.isEnabled() ? postgresUserStore.getUserById(id) : getUserById(id);
+}
+
+async function authenticate(req, res, next) {
   const authHeader = req.get("authorization") || "";
   const [scheme, token] = authHeader.split(" ");
 
@@ -18,7 +23,7 @@ function authenticate(req, res, next) {
     return res.status(401).json({ error: "Invalid or expired token." });
   }
 
-  const user = getUserById(payload.sub);
+  const user = await findAuthenticatedUser(payload.sub);
   if (!user) {
     return res.status(401).json({ error: "User no longer exists." });
   }

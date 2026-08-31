@@ -1,17 +1,23 @@
 const { hashPassword } = require("./passwords");
-const { createSuperadmin, getUserByEmail, hasSuperadmin, sanitizeUser } = require("./userStore");
+const localUserStore = require("./userStore");
+const postgresUserStore = require("./postgresUserStore");
 
-function ensureSuperadminFromEnv({ logger = console } = {}) {
+function getStore() {
+  return postgresUserStore.isEnabled() ? postgresUserStore : localUserStore;
+}
+
+async function ensureSuperadminFromEnv({ logger = console } = {}) {
   const email = process.env.SUPERADMIN_EMAIL;
   const password = process.env.SUPERADMIN_PASSWORD;
   const name = process.env.SUPERADMIN_NAME || "Main Admin";
+  const store = getStore();
 
-  if (hasSuperadmin()) {
-    const existingUser = email ? getUserByEmail(email) : null;
+  if (await store.hasSuperadmin()) {
+    const existingUser = email ? await store.getUserByEmail(email) : null;
     return {
       created: false,
       reason: "already_exists",
-      user: existingUser ? sanitizeUser(existingUser) : null,
+      user: existingUser ? localUserStore.sanitizeUser(existingUser) : null,
     };
   }
 
@@ -24,7 +30,7 @@ function ensureSuperadminFromEnv({ logger = console } = {}) {
     };
   }
 
-  const user = createSuperadmin({
+  const user = await store.createSuperadmin({
     name,
     email,
     passwordHash: hashPassword(password),
@@ -34,7 +40,7 @@ function ensureSuperadminFromEnv({ logger = console } = {}) {
   return {
     created: true,
     reason: "created",
-    user: sanitizeUser(user),
+    user: localUserStore.sanitizeUser(user),
   };
 }
 

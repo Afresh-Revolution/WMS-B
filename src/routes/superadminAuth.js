@@ -18,6 +18,7 @@ const {
   updateUser,
   updateUserPassword,
 } = require("../auth/userStore");
+const postgresUserStore = require("../auth/postgresUserStore");
 
 const superadminRouter = express.Router();
 const MAX_FAILED_LOGINS = 5;
@@ -61,13 +62,41 @@ function validateBootstrapToken(setupToken) {
   return typeof setupToken === "string" && setupToken === configuredToken;
 }
 
-superadminRouter.get("/bootstrap/status", (req, res) => {
-  res.json({ bootstrapped: hasSuperadmin() });
+function usingPostgresUsers() {
+  return postgresUserStore.isEnabled();
+}
+
+async function authHasSuperadmin() {
+  return usingPostgresUsers() ? postgresUserStore.hasSuperadmin() : hasSuperadmin();
+}
+
+async function authGetUserByEmail(email) {
+  return usingPostgresUsers() ? postgresUserStore.getUserByEmail(email) : getUserByEmail(email);
+}
+
+async function authGetUserById(id) {
+  return usingPostgresUsers() ? postgresUserStore.getUserById(id) : getUserById(id);
+}
+
+async function authCreateSuperadmin(payload) {
+  return usingPostgresUsers() ? postgresUserStore.createSuperadmin(payload) : createSuperadmin(payload);
+}
+
+async function authUpdateUser(id, payload) {
+  return usingPostgresUsers() ? postgresUserStore.updateUser(id, payload) : updateUser(id, payload);
+}
+
+async function authUpdateUserPassword(id, passwordHash) {
+  return usingPostgresUsers() ? postgresUserStore.updateUserPassword(id, passwordHash) : updateUserPassword(id, passwordHash);
+}
+
+superadminRouter.get("/bootstrap/status", async (req, res) => {
+  res.json({ bootstrapped: await authHasSuperadmin() });
 });
 
-superadminRouter.post("/bootstrap", (req, res, next) => {
+superadminRouter.post("/bootstrap", async (req, res, next) => {
   try {
-    if (hasSuperadmin()) {
+    if (await authHasSuperadmin()) {
       return res.status(409).json({ error: "Superadmin has already been bootstrapped." });
     }
 
@@ -90,7 +119,7 @@ superadminRouter.post("/bootstrap", (req, res, next) => {
       return res.status(400).json({ error: passwordError });
     }
 
-    const user = createSuperadmin({
+    const user = await authCreateSuperadmin({
       name: name.trim(),
       email: email.trim(),
       passwordHash: hashPassword(password),
@@ -104,14 +133,14 @@ superadminRouter.post("/bootstrap", (req, res, next) => {
   }
 });
 
-superadminRouter.post("/login", (req, res) => {
+superadminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
 
   if (typeof email !== "string" || typeof password !== "string") {
     return res.status(400).json({ error: "Email and password are required." });
   }
 
-  const user = getUserByEmail(email.trim());
+  const user = await authGetUserByEmail(email.trim());
   if (!user || user.role !== "superadmin") {
     recordFailedLogin({ email, req, reason: "unknown_superadmin" });
     recordLoginHistory({ userId: null, status: "failed", req, reason: "unknown_superadmin" });
@@ -133,19 +162,19 @@ superadminRouter.post("/login", (req, res) => {
       updates.lockedAt = new Date().toISOString();
     }
 
-    updateUser(user.id, updates);
+    await authUpdateUser(user.id, updates);
     recordFailedLogin({ email, userId: user.id, req, reason: "invalid_password" });
     recordLoginHistory({ userId: user.id, status: "failed", req, reason: "invalid_password" });
     return res.status(401).json({ error: "Invalid superadmin credentials." });
   }
 
-  const updatedUser = updateUser(user.id, { failedLoginCount: 0, lastLoginAt: new Date().toISOString() });
+  const updatedUser = await authUpdateUser(user.id, { failedLoginCount: 0, lastLoginAt: new Date().toISOString() });
   recordLoginHistory({ userId: user.id, status: "success", req, reason: "password" });
 
   return res.json(issueAuthResponse(updatedUser || user, req));
 });
 
-superadminRouter.post("/refresh", (req, res) => {
+superadminRouter.post("/refresh", async (req, res) => {
   const { refreshToken } = req.body || {};
 
   if (typeof refreshToken !== "string") {
@@ -157,7 +186,7 @@ superadminRouter.post("/refresh", (req, res) => {
     return res.status(401).json({ error: "Invalid refresh token." });
   }
 
-  const user = getUserById(session.userId);
+  const user = await authGetUserById(session.userId);
   if (!user || user.role !== "superadmin" || user.status !== "active") {
     return res.status(401).json({ error: "User no longer has access." });
   }
@@ -179,14 +208,14 @@ superadminRouter.get("/me", authenticate, requireRole("superadmin"), (req, res) 
 });
 
 function changePasswordHandler(req, res, next) {
-  try {
+  Promise.resolve().then(async () => {
     const { currentPassword, newPassword } = req.body || {};
 
     if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
       return res.status(400).json({ error: "Current password and new password are required." });
     }
 
-    const user = getUserByEmail(req.user.email);
+    const user = await authGetUserByEmail(req.user.email);
     if (!user || !verifyPassword(currentPassword, user.passwordHash)) {
       return res.status(401).json({ error: "Current password is incorrect." });
     }
@@ -196,11 +225,9 @@ function changePasswordHandler(req, res, next) {
       return res.status(400).json({ error: passwordError });
     }
 
-    const updatedUser = updateUserPassword(user.id, hashPassword(newPassword));
+    const updatedUser = await authUpdateUserPassword(user.id, hashPassword(newPassword));
     return res.json({ user: sanitizeUser(updatedUser) });
-  } catch (error) {
-    return next(error);
-  }
+  }).catch(next);
 }
 
 superadminRouter.patch("/password", authenticate, requireRole("superadmin"), changePasswordHandler);

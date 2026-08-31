@@ -6,15 +6,20 @@ const { assertRuntimeConfig, getRuntimeConfig } = require("./config");
 const { startBackgroundWorkers, stopBackgroundWorkers } = require("./workers");
 
 assertRuntimeConfig();
-ensureSuperadminFromEnv();
 
-const app = createApp();
-const runtimeConfig = getRuntimeConfig();
+let server;
 
-const server = app.listen(runtimeConfig.port, () => {
-  console.log(`WMS API listening on port ${runtimeConfig.port}`);
-  startBackgroundWorkers();
-});
+async function start() {
+  await ensureSuperadminFromEnv();
+
+  const app = createApp();
+  const runtimeConfig = getRuntimeConfig();
+
+  server = app.listen(runtimeConfig.port, () => {
+    console.log(`WMS API listening on port ${runtimeConfig.port}`);
+    startBackgroundWorkers();
+  });
+}
 
 function shutdown(signal) {
   console.log(`${signal} received. Shutting down WMS API.`);
@@ -25,6 +30,10 @@ function shutdown(signal) {
     process.exit(1);
   }, runtimeConfig.shutdownTimeoutMs);
   if (typeof forceExit.unref === "function") forceExit.unref();
+
+  if (!server) {
+    process.exit(0);
+  }
 
   server.close((error) => {
     if (error) {
@@ -37,3 +46,8 @@ function shutdown(signal) {
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+
+start().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

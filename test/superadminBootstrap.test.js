@@ -8,7 +8,7 @@ const { verifyPassword } = require("../src/auth/passwords");
 const { ensureSuperadminFromEnv } = require("../src/auth/bootstrap");
 const { getUserByEmail } = require("../src/auth/userStore");
 
-test("auto-creates the superadmin from environment when no superadmin exists", () => {
+test("auto-creates the superadmin from environment when no superadmin exists", async () => {
   const previousDataDir = process.env.DATA_DIR;
   const previousEmail = process.env.SUPERADMIN_EMAIL;
   const previousPassword = process.env.SUPERADMIN_PASSWORD;
@@ -21,7 +21,7 @@ test("auto-creates the superadmin from environment when no superadmin exists", (
     process.env.SUPERADMIN_PASSWORD = "StrongPassword123!";
     process.env.SUPERADMIN_NAME = "Owner Admin";
 
-    const result = ensureSuperadminFromEnv({ logger: { log() {}, warn() {} } });
+    const result = await ensureSuperadminFromEnv({ logger: { log() {}, warn() {} } });
     const user = getUserByEmail("owner@example.com");
 
     assert.equal(result.created, true);
@@ -29,7 +29,7 @@ test("auto-creates the superadmin from environment when no superadmin exists", (
     assert.equal(user.role, "superadmin");
     assert.equal(verifyPassword("StrongPassword123!", user.passwordHash), true);
 
-    const secondResult = ensureSuperadminFromEnv({ logger: { log() {}, warn() {} } });
+    const secondResult = await ensureSuperadminFromEnv({ logger: { log() {}, warn() {} } });
     assert.equal(secondResult.created, false);
     assert.equal(secondResult.reason, "already_exists");
   } finally {

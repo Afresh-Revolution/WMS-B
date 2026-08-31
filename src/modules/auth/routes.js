@@ -21,6 +21,7 @@ const {
   updateUser,
   updateUserPassword,
 } = require("../../auth/userStore");
+const postgresUserStore = require("../../auth/postgresUserStore");
 const { appendRecord, readCollection, writeCollection } = require("../../database/jsonStore");
 const securityService = require("../security/securityService");
 const emailService = require("../email/email.service");
@@ -58,6 +59,34 @@ function validateBootstrapToken(setupToken) {
   }
 
   return typeof setupToken === "string" && setupToken === configuredToken;
+}
+
+function usingPostgresUsers() {
+  return postgresUserStore.isEnabled();
+}
+
+async function authHasSuperadmin() {
+  return usingPostgresUsers() ? postgresUserStore.hasSuperadmin() : hasSuperadmin();
+}
+
+async function authGetUserByEmail(email) {
+  return usingPostgresUsers() ? postgresUserStore.getUserByEmail(email) : getUserByEmail(email);
+}
+
+async function authGetUserById(id) {
+  return usingPostgresUsers() ? postgresUserStore.getUserById(id) : getUserById(id);
+}
+
+async function authCreateSuperadmin(payload) {
+  return usingPostgresUsers() ? postgresUserStore.createSuperadmin(payload) : createSuperadmin(payload);
+}
+
+async function authUpdateUser(id, payload) {
+  return usingPostgresUsers() ? postgresUserStore.updateUser(id, payload) : updateUser(id, payload);
+}
+
+async function authUpdateUserPassword(id, passwordHash) {
+  return usingPostgresUsers() ? postgresUserStore.updateUserPassword(id, passwordHash) : updateUserPassword(id, passwordHash);
 }
 
 function getSecuritySetting(key, fallback) {
@@ -136,12 +165,12 @@ function recordAuthAudit({ user, req, action, status = "SUCCESS", description, m
   }).catch(() => null);
 }
 
-authRouter.get("/bootstrap/status", (req, res) => {
-  return res.json({ success: true, message: "Bootstrap status loaded.", data: { bootstrapped: hasSuperadmin() }, meta: {} });
+authRouter.get("/bootstrap/status", async (req, res) => {
+  return res.json({ success: true, message: "Bootstrap status loaded.", data: { bootstrapped: await authHasSuperadmin() }, meta: {} });
 });
 
-authRouter.post("/bootstrap", (req, res) => {
-  if (hasSuperadmin()) {
+authRouter.post("/bootstrap", async (req, res) => {
+  if (await authHasSuperadmin()) {
     throw createHttpError(409, "Superadmin has already been bootstrapped.", "SUPERADMIN_EXISTS");
   }
 
@@ -159,7 +188,7 @@ authRouter.post("/bootstrap", (req, res) => {
     throw createHttpError(400, "Password must be at least 8 characters.", "VALIDATION_ERROR");
   }
 
-  const user = createSuperadmin({
+  const user = await authCreateSuperadmin({
     name: String(name || fullName).trim(),
     email: normalizeEmail(email),
     passwordHash: hashPassword(password),
@@ -170,14 +199,14 @@ authRouter.post("/bootstrap", (req, res) => {
   return res.status(201).json(auth);
 });
 
-authRouter.post("/login", (req, res) => {
+authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (typeof email !== "string" || typeof password !== "string") {
     throw createHttpError(400, "Email and password are required.", "VALIDATION_ERROR");
   }
 
   const normalizedEmail = normalizeEmail(email);
-  let user = getUserByEmail(normalizedEmail);
+  let user = await authGetUserByEmail(normalizedEmail);
   if (!user) {
     securityService.recordLoginAttempt({ email: normalizedEmail, req, successful: false, failureReason: "unknown_account" });
     recordFailedLogin({ email: normalizedEmail, req, reason: "unknown_account" });
@@ -188,8 +217,8 @@ authRouter.post("/login", (req, res) => {
 
   const status = String(user.status || "active").toLowerCase();
   if (status === "locked" && user.lockedUntil && new Date(user.lockedUntil).getTime() <= Date.now()) {
-    updateUser(user.id, { status: "active", lockedAt: null, lockedUntil: null, failedLoginAttempts: 0, failedLoginCount: 0 });
-    user = getUserById(user.id);
+    await authUpdateUser(user.id, { status: "active", lockedAt: null, lockedUntil: null, failedLoginAttempts: 0, failedLoginCount: 0 });
+    user = await authGetUserById(user.id);
   } else if (!["active"].includes(status)) {
     securityService.recordLoginAttempt({ userId: user.id, email: normalizedEmail, req, successful: false, failureReason: `account_${status}` });
     recordFailedLogin({ email: normalizedEmail, userId: user.id, req, reason: `account_${status}` });
@@ -215,7 +244,7 @@ authRouter.post("/login", (req, res) => {
       securityService.appendSecurityEvent("ACCOUNT_LOCKED", user, user.id, { failedLoginAttempts }, req, "failed");
     }
 
-    updateUser(user.id, updates);
+    await authUpdateUser(user.id, updates);
     securityService.recordLoginAttempt({ userId: user.id, email: normalizedEmail, req, successful: false, failureReason: "invalid_password" });
     recordFailedLogin({ email: normalizedEmail, userId: user.id, req, reason: "invalid_password" });
     recordLoginHistory({ userId: user.id, status: "failed", req, reason: "invalid_password" });
@@ -223,7 +252,7 @@ authRouter.post("/login", (req, res) => {
     throw createHttpError(401, "Invalid credentials.", "INVALID_CREDENTIALS");
   }
 
-  const updatedUser = updateUser(user.id, {
+  const updatedUser = await authUpdateUser(user.id, {
     failedLoginAttempts: 0,
     failedLoginCount: 0,
     lastLoginAt: now(),
@@ -245,9 +274,9 @@ authRouter.post("/login", (req, res) => {
   return res.json(issueAuthResponse(updatedUser, req));
 });
 
-authRouter.post("/mfa/verify", (req, res) => {
+authRouter.post("/mfa/verify", async (req, res) => {
   const user = securityService.verifyMfaChallenge(req.body?.challengeId, req.body?.code, req);
-  const updatedUser = updateUser(user.id, {
+  const updatedUser = await authUpdateUser(user.id, {
     failedLoginAttempts: 0,
     failedLoginCount: 0,
     lastLoginAt: now(),
@@ -258,7 +287,7 @@ authRouter.post("/mfa/verify", (req, res) => {
   return res.json(issueAuthResponse(updatedUser, req));
 });
 
-authRouter.post("/refresh", (req, res) => {
+authRouter.post("/refresh", async (req, res) => {
   const { refreshToken } = req.body || {};
   if (typeof refreshToken !== "string") {
     throw createHttpError(400, "Refresh token is required.", "VALIDATION_ERROR");
@@ -269,7 +298,7 @@ authRouter.post("/refresh", (req, res) => {
     throw createHttpError(401, "Invalid refresh token.", "INVALID_REFRESH_TOKEN");
   }
 
-  const user = getUserById(session.userId);
+  const user = await authGetUserById(session.userId);
   if (!user || String(user.status || "").toLowerCase() !== "active") {
     throw createHttpError(401, "User no longer has access.", "USER_ACCESS_REVOKED");
   }
@@ -287,13 +316,13 @@ authRouter.post("/logout", authenticate, (req, res) => {
   return res.status(204).send();
 });
 
-authRouter.get("/me", authenticate, (req, res) => {
-  return res.json({ success: true, message: "Current user loaded.", data: decorateUser(getUserById(req.user.id)), meta: {} });
+authRouter.get("/me", authenticate, async (req, res) => {
+  return res.json({ success: true, message: "Current user loaded.", data: decorateUser(await authGetUserById(req.user.id)), meta: {} });
 });
 
-authRouter.post("/change-password", authenticate, (req, res) => {
+authRouter.post("/change-password", authenticate, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  const user = getUserById(req.user.id);
+  const user = await authGetUserById(req.user.id);
   if (!user || typeof currentPassword !== "string" || !verifyPassword(currentPassword, user.passwordHash)) {
     throw createHttpError(401, "Current password is incorrect.", "INVALID_CURRENT_PASSWORD");
   }
@@ -303,11 +332,11 @@ authRouter.post("/change-password", authenticate, (req, res) => {
   securityService.validatePasswordAgainstPolicy(newPassword, user.id);
 
   securityService.recordPasswordHistory(user);
-  const updated = updateUserPassword(user.id, hashPassword(newPassword));
-  updateUser(user.id, { mustChangePassword: false, forcePasswordReset: false, lastActivityAt: now() });
+  const updated = await authUpdateUserPassword(user.id, hashPassword(newPassword));
+  await authUpdateUser(user.id, { mustChangePassword: false, forcePasswordReset: false, lastActivityAt: now() });
   recordAuthAudit({ user: updated, req, action: "PASSWORD_CHANGED", description: "User changed password." });
   securityService.appendSecurityEvent("PASSWORD_CHANGED", updated, updated.id, {}, req);
-  return res.json({ success: true, message: "Password changed.", data: decorateUser(getUserById(user.id)), meta: {} });
+  return res.json({ success: true, message: "Password changed.", data: decorateUser(await authGetUserById(user.id)), meta: {} });
 });
 
 authRouter.post("/forgot-password", (req, res) => {
@@ -408,8 +437,8 @@ authRouter.delete("/sessions/:id", authenticate, (req, res) => {
   return res.json({ success: true, message: "Session revoked.", data: safeSession(session), meta: {} });
 });
 
-authRouter.get("/superadmin/me", authenticate, requireRole("superadmin"), (req, res) => {
-  return res.json({ success: true, message: "Super Admin loaded.", data: decorateUser(getUserById(req.user.id)), meta: {} });
+authRouter.get("/superadmin/me", authenticate, requireRole("superadmin"), async (req, res) => {
+  return res.json({ success: true, message: "Super Admin loaded.", data: decorateUser(await authGetUserById(req.user.id)), meta: {} });
 });
 
 module.exports = { authRouter };
