@@ -1,10 +1,12 @@
 require("dotenv").config();
 
 const { createApp } = require("./app");
+const { ensureSuperadminFromEnv } = require("./auth/bootstrap");
 const { assertRuntimeConfig, getRuntimeConfig } = require("./config");
 const { startBackgroundWorkers, stopBackgroundWorkers } = require("./workers");
 
 assertRuntimeConfig();
+ensureSuperadminFromEnv();
 
 const app = createApp();
 const runtimeConfig = getRuntimeConfig();
