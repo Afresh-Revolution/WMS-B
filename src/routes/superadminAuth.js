@@ -21,7 +21,19 @@ const {
 const postgresUserStore = require("../auth/postgresUserStore");
 
 const superadminRouter = express.Router();
-const MAX_FAILED_LOGINS = 5;
+
+function envNumber(name, fallback, min = 1) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+}
+
+function getMaxFailedLogins() {
+  return envNumber("MAX_LOGIN_ATTEMPTS", 10);
+}
+
+function getLockoutDurationMinutes() {
+  return envNumber("LOCKOUT_DURATION_MINUTES", 15);
+}
 
 function issueAuthResponse(user, req) {
   const refreshToken = issueRefreshToken();
@@ -140,14 +152,28 @@ superadminRouter.post("/login", async (req, res) => {
     return res.status(400).json({ error: "Email and password are required." });
   }
 
-  const user = await authGetUserByEmail(email.trim());
+  let user = await authGetUserByEmail(email.trim());
   if (!user || user.role !== "superadmin") {
     recordFailedLogin({ email, req, reason: "unknown_superadmin" });
     recordLoginHistory({ userId: null, status: "failed", req, reason: "unknown_superadmin" });
     return res.status(401).json({ error: "Invalid superadmin credentials." });
   }
 
-  if (user.status === "locked" || user.lockedAt) {
+  if (
+    String(user.status || "active").toLowerCase() === "locked" &&
+    user.lockedUntil &&
+    new Date(user.lockedUntil).getTime() <= Date.now()
+  ) {
+    user = await authUpdateUser(user.id, {
+      status: "active",
+      lockedAt: null,
+      lockedUntil: null,
+      failedLoginAttempts: 0,
+      failedLoginCount: 0,
+    });
+  }
+
+  if (String(user.status || "active").toLowerCase() === "locked" || user.lockedAt) {
     recordFailedLogin({ email, userId: user.id, req, reason: "account_locked" });
     recordLoginHistory({ userId: user.id, status: "failed", req, reason: "account_locked" });
     return res.status(423).json({ error: "Account is locked." });
@@ -157,9 +183,10 @@ superadminRouter.post("/login", async (req, res) => {
     const failedLoginCount = Number(user.failedLoginCount || 0) + 1;
     const updates = { failedLoginCount };
 
-    if (failedLoginCount >= MAX_FAILED_LOGINS) {
+    if (failedLoginCount >= getMaxFailedLogins()) {
       updates.status = "locked";
       updates.lockedAt = new Date().toISOString();
+      updates.lockedUntil = new Date(Date.now() + getLockoutDurationMinutes() * 60 * 1000).toISOString();
     }
 
     await authUpdateUser(user.id, updates);

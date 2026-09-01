@@ -6,6 +6,14 @@ const { appendRecord, readCollection, writeCollection } = require("../../databas
 const { applyBasicFilters, paginate } = require("../../utils/query");
 const { recordTechnicalAuditEvent, redactSensitiveData } = require("../_shared/auditService");
 
+function envNumber(name, fallback, min = 1) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+}
+
+const DEFAULT_MAX_LOGIN_ATTEMPTS = envNumber("MAX_LOGIN_ATTEMPTS", 10);
+const DEFAULT_LOCKOUT_DURATION_MINUTES = envNumber("LOCKOUT_DURATION_MINUTES", 15);
+
 const DEFAULT_SECURITY_SETTINGS = Object.freeze({
   minimumPasswordLength: 10,
   minimum_password_length: 10,
@@ -31,10 +39,10 @@ const DEFAULT_SECURITY_SETTINGS = Object.freeze({
   allow_email_mfa: true,
   allowAuthenticatorMfa: true,
   allow_authenticator_mfa: true,
-  maxLoginAttempts: 5,
-  max_login_attempts: 5,
-  lockoutDurationMinutes: 30,
-  lockout_duration_minutes: 30,
+  maxLoginAttempts: DEFAULT_MAX_LOGIN_ATTEMPTS,
+  max_login_attempts: DEFAULT_MAX_LOGIN_ATTEMPTS,
+  lockoutDurationMinutes: DEFAULT_LOCKOUT_DURATION_MINUTES,
+  lockout_duration_minutes: DEFAULT_LOCKOUT_DURATION_MINUTES,
   sessionTimeoutMinutes: 60,
   session_timeout_minutes: 60,
   maxConcurrentSessions: 5,
@@ -98,10 +106,10 @@ function normalizeSecuritySettings(payload = {}) {
     allow_email_mfa: normalizeBoolean(payload.allowEmailMfa ?? payload.allow_email_mfa, true),
     allowAuthenticatorMfa: normalizeBoolean(payload.allowAuthenticatorMfa ?? payload.allow_authenticator_mfa, true),
     allow_authenticator_mfa: normalizeBoolean(payload.allowAuthenticatorMfa ?? payload.allow_authenticator_mfa, true),
-    maxLoginAttempts: normalizeNumber(payload.maxLoginAttempts ?? payload.max_login_attempts, 5, 1),
-    max_login_attempts: normalizeNumber(payload.maxLoginAttempts ?? payload.max_login_attempts, 5, 1),
-    lockoutDurationMinutes: normalizeNumber(payload.lockoutDurationMinutes ?? payload.lockout_duration_minutes, 30, 1),
-    lockout_duration_minutes: normalizeNumber(payload.lockoutDurationMinutes ?? payload.lockout_duration_minutes, 30, 1),
+    maxLoginAttempts: normalizeNumber(payload.maxLoginAttempts ?? payload.max_login_attempts, DEFAULT_MAX_LOGIN_ATTEMPTS, 1),
+    max_login_attempts: normalizeNumber(payload.maxLoginAttempts ?? payload.max_login_attempts, DEFAULT_MAX_LOGIN_ATTEMPTS, 1),
+    lockoutDurationMinutes: normalizeNumber(payload.lockoutDurationMinutes ?? payload.lockout_duration_minutes, DEFAULT_LOCKOUT_DURATION_MINUTES, 1),
+    lockout_duration_minutes: normalizeNumber(payload.lockoutDurationMinutes ?? payload.lockout_duration_minutes, DEFAULT_LOCKOUT_DURATION_MINUTES, 1),
     sessionTimeoutMinutes: normalizeNumber(payload.sessionTimeoutMinutes ?? payload.session_timeout_minutes, 60, 1),
     session_timeout_minutes: normalizeNumber(payload.sessionTimeoutMinutes ?? payload.session_timeout_minutes, 60, 1),
     maxConcurrentSessions: normalizeNumber(payload.maxConcurrentSessions ?? payload.max_concurrent_sessions, 5, 1),
