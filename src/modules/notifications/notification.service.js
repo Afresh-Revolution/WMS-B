@@ -14,8 +14,9 @@ const CHANNEL_COLLECTION = "notification_channels";
 const RULE_COLLECTION = "notification_rules";
 const PREFERENCE_COLLECTION = "notification_preferences";
 const JOB_COLLECTION = "notification_jobs";
+const PUSH_SUBSCRIPTION_COLLECTION = "push_subscriptions";
 
-const CHANNELS = Object.freeze(["in_app", "email", "sms"]);
+const CHANNELS = Object.freeze(["in_app", "email", "sms", "push"]);
 const PRIORITIES = Object.freeze(["low", "normal", "high", "urgent"]);
 const MAX_RETRIES = 3;
 
@@ -64,6 +65,8 @@ const DEFAULT_RULES = Object.freeze({
   SECURITY_ALERT: ["in_app", "email", "sms", "urgent"],
   PASSWORD_CHANGED: ["in_app", "email", "high"],
   ACCOUNT_LOCKED: ["in_app", "email", "sms", "urgent"],
+  ATTENDANCE_CHECK_IN_ACCEPTED: ["in_app", "push", "normal"],
+  ATTENDANCE_LOCATION_UPDATED: ["in_app", "push", "normal"],
 });
 
 function now() {
@@ -101,9 +104,28 @@ function normalizeType(type) {
   return String(type || "GENERAL").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
+function normalizeDestinationUrl(value) {
+  if (!value) {
+    return null;
+  }
+  const destination = String(value).trim();
+  if (!destination.startsWith("/") || destination.startsWith("//") || destination.includes("\\") || /[\r\n]/.test(destination)) {
+    throw createHttpError(400, "Notification destination URL must be an internal route.", "INVALID_NOTIFICATION_DESTINATION");
+  }
+  return destination;
+}
+
 function normalizePriority(priority) {
   const normalized = String(priority || "normal").toLowerCase();
   return PRIORITIES.includes(normalized) ? normalized : "normal";
+}
+
+function endpointHash(endpoint) {
+  return crypto.createHash("sha256").update(String(endpoint || "")).digest("hex");
+}
+
+function getVapidPublicKey() {
+  return process.env.WEB_PUSH_VAPID_PUBLIC_KEY || null;
 }
 
 function getCollectionRecord(collection, predicate) {
@@ -154,6 +176,8 @@ function ensureDefaultRules() {
         email_enabled: channels.includes("email"),
         smsEnabled: channels.includes("sms"),
         sms_enabled: channels.includes("sms"),
+        pushEnabled: channels.includes("push"),
+        push_enabled: channels.includes("push"),
         priority,
         updatedBy: null,
         updated_by: null,
@@ -205,6 +229,7 @@ function sanitizeRule(rule) {
     inAppEnabled: Boolean(rule.inAppEnabled ?? rule.in_app_enabled),
     emailEnabled: Boolean(rule.emailEnabled ?? rule.email_enabled),
     smsEnabled: Boolean(rule.smsEnabled ?? rule.sms_enabled),
+    pushEnabled: Boolean(rule.pushEnabled ?? rule.push_enabled ?? true),
     priority: normalizePriority(rule.priority),
     updatedAt: rule.updatedAt || rule.updated_at,
     updatedBy: rule.updatedBy || rule.updated_by || null,
@@ -252,6 +277,7 @@ function getConfiguration(user = null) {
       inApp: channels.in_app,
       email: channels.email,
       sms: channels.sms,
+      push: channels.push,
     },
     dailyDigest: {
       enabled: Boolean(settings.dailyDigestEnabled),
@@ -350,6 +376,8 @@ function updateRule(type, payload, req) {
     email_enabled: payload.emailEnabled ?? payload.email_enabled ?? before?.emailEnabled ?? before?.email_enabled ?? true,
     smsEnabled: payload.smsEnabled ?? payload.sms_enabled ?? before?.smsEnabled ?? before?.sms_enabled ?? false,
     sms_enabled: payload.smsEnabled ?? payload.sms_enabled ?? before?.smsEnabled ?? before?.sms_enabled ?? false,
+    pushEnabled: payload.pushEnabled ?? payload.push_enabled ?? before?.pushEnabled ?? before?.push_enabled ?? true,
+    push_enabled: payload.pushEnabled ?? payload.push_enabled ?? before?.pushEnabled ?? before?.push_enabled ?? true,
     priority: normalizePriority(payload.priority || before?.priority || "normal"),
     updatedBy: req.user.id,
     updated_by: req.user.id,
@@ -423,6 +451,9 @@ function nextAfterQuietHours(preferences) {
 }
 
 function createNotificationRecord(payload, user, priority) {
+  const destinationUrl = normalizeDestinationUrl(payload.destinationUrl || payload.destination_url || payload.url);
+  const organizationId = payload.organizationId || payload.organization_id || user?.organizationId || user?.organization_id || null;
+  const idempotencyKey = payload.idempotencyKey || payload.idempotency_key || null;
   return appendRecord(NOTIFICATION_COLLECTION, {
     id: crypto.randomUUID(),
     userId: user?.id || payload.userId || payload.recipientUserId || null,
@@ -430,6 +461,8 @@ function createNotificationRecord(payload, user, priority) {
     recipientUserId: user?.id || payload.userId || payload.recipientUserId || null,
     recipient_user_id: user?.id || payload.userId || payload.recipientUserId || null,
     recipientEmployeeId: payload.recipientEmployeeId || payload.recipient_employee_id || null,
+    organizationId,
+    organization_id: organizationId,
     type: normalizeType(payload.type),
     title: payload.title,
     message: payload.message || payload.body || null,
@@ -446,6 +479,10 @@ function createNotificationRecord(payload, user, priority) {
     read_at: null,
     status: "queued",
     data: payload.data || {},
+    destinationUrl,
+    destination_url: destinationUrl,
+    idempotencyKey,
+    idempotency_key: idempotencyKey,
     expiresAt: payload.expiresAt || payload.expires_at || null,
     expires_at: payload.expiresAt || payload.expires_at || null,
     createdAt: now(),
@@ -536,6 +573,27 @@ function getUserContact(user, channel) {
   return null;
 }
 
+function getActivePushSubscriptions(userId) {
+  if (!userId) return [];
+  return readCollection(PUSH_SUBSCRIPTION_COLLECTION).filter((subscription) =>
+    !subscription.deletedAt &&
+    !subscription.deleted_at &&
+    !subscription.revokedAt &&
+    !subscription.revoked_at &&
+    !subscription.disabledAt &&
+    !subscription.disabled_at &&
+    (subscription.userId || subscription.user_id) === userId
+  );
+}
+
+function minimalPushMessage(payload = {}) {
+  return {
+    title: payload.title || "Notification",
+    body: payload.pushBody || payload.push_body || payload.message || payload.body || "",
+    destinationUrl: normalizeDestinationUrl(payload.destinationUrl || payload.destination_url || payload.url) || "/notifications",
+  };
+}
+
 function shouldUseChannel({ rule, channels, preferences, channel, type }) {
   if (!channels[channel]) {
     return false;
@@ -545,7 +603,9 @@ function shouldUseChannel({ rule, channels, preferences, channel, type }) {
       ? rule.inAppEnabled ?? rule.in_app_enabled
       : channel === "email"
         ? rule.emailEnabled ?? rule.email_enabled
-        : rule.smsEnabled ?? rule.sms_enabled;
+        : channel === "sms"
+          ? rule.smsEnabled ?? rule.sms_enabled
+          : rule.pushEnabled ?? rule.push_enabled ?? true;
   if (!ruleEnabled) {
     return false;
   }
@@ -564,6 +624,15 @@ function send(payload = {}, options = {}) {
   const type = normalizeType(payload.type);
   const userId = payload.userId || payload.recipientUserId || payload.user_id || payload.recipient_user_id;
   const user = userId ? getUserById(userId) : null;
+  const idempotencyKey = payload.idempotencyKey || payload.idempotency_key || options.idempotencyKey || null;
+  if (idempotencyKey) {
+    const existing = readCollection(NOTIFICATION_COLLECTION).find(
+      (record) => !record.deletedAt && !record.deleted_at && (record.idempotencyKey || record.idempotency_key) === idempotencyKey
+    );
+    if (existing) {
+      return { notification: existing, jobs: [], delayedUntil: null, idempotent: true };
+    }
+  }
   const rule = getRule(type);
   const channels = getChannelsMap();
   const preferences = getUserPreferences(userId || "anonymous");
@@ -582,7 +651,7 @@ function send(payload = {}, options = {}) {
     createDeliveryLog({ notification: effectiveNotification, user, channel: "in_app", status: "skipped", errorMessage: "In-app channel disabled.", attemptCount: 0 });
   }
 
-  for (const channel of ["email", "sms"]) {
+  for (const channel of ["email", "sms", "push"]) {
     if (!requestedChannels.includes(channel)) {
       continue;
     }
@@ -590,8 +659,8 @@ function send(payload = {}, options = {}) {
       createDeliveryLog({ notification: effectiveNotification, user, channel, status: "skipped", errorMessage: "Channel disabled by configuration or preference.", attemptCount: 0 });
       continue;
     }
-    const contact = getUserContact(user, channel) || payload[channel === "email" ? "email" : "phone"];
-    if (!contact) {
+    const contact = channel === "push" ? getActivePushSubscriptions(user?.id || userId) : getUserContact(user, channel) || payload[channel === "email" ? "email" : "phone"];
+    if ((Array.isArray(contact) && !contact.length) || (!Array.isArray(contact) && !contact)) {
       createDeliveryLog({ notification: effectiveNotification, user, channel, status: "skipped", errorMessage: "Recipient contact is missing.", attemptCount: 0 });
       continue;
     }
@@ -604,10 +673,10 @@ function send(payload = {}, options = {}) {
         payload: {
           to: contact,
           subject: payload.subject || payload.title,
-          message: payload.message || payload.body,
-          body: payload.body || payload.message,
+          message: channel === "push" ? minimalPushMessage(payload) : payload.message || payload.body,
+          body: channel === "push" ? minimalPushMessage(payload) : payload.body || payload.message,
           template: payload.template || null,
-          data: payload.data || {},
+          data: channel === "push" ? { destinationUrl: minimalPushMessage(payload).destinationUrl } : payload.data || {},
         },
       })
     );
@@ -631,8 +700,148 @@ function sanitizeNotification(notification) {
     readAt: notification.readAt || notification.read_at || null,
     createdAt: notification.createdAt || notification.created_at || null,
     expiresAt: notification.expiresAt || notification.expires_at || null,
+    destinationUrl: notification.destinationUrl || notification.destination_url || null,
     data: notification.data || {},
   };
+}
+
+function getUnreadCount(user) {
+  return { unreadCount: listUserNotifications(user, { limit: 1 }).unreadCount };
+}
+
+function sanitizePushSubscription(subscription) {
+  return {
+    id: subscription.id,
+    userId: subscription.userId || subscription.user_id,
+    organizationId: subscription.organizationId || subscription.organization_id || null,
+    endpointHash: subscription.endpointHash || subscription.endpoint_hash,
+    browser: subscription.browser || null,
+    device: subscription.device || null,
+    userAgent: subscription.userAgent || subscription.user_agent || null,
+    lastSuccessfulDeliveryAt: subscription.lastSuccessfulDeliveryAt || subscription.last_successful_delivery_at || null,
+    failureCount: Number(subscription.failureCount || subscription.failure_count || 0),
+    revokedAt: subscription.revokedAt || subscription.revoked_at || null,
+    disabledAt: subscription.disabledAt || subscription.disabled_at || null,
+    createdAt: subscription.createdAt || subscription.created_at || null,
+    updatedAt: subscription.updatedAt || subscription.updated_at || null,
+  };
+}
+
+function validatePushSubscriptionPayload(payload = {}) {
+  const subscription = payload.subscription || payload;
+  const endpoint = String(subscription.endpoint || "").trim();
+  if (!/^https:\/\/.+/i.test(endpoint)) {
+    throw createHttpError(400, "A valid HTTPS push endpoint is required.", "INVALID_PUSH_ENDPOINT");
+  }
+  const keys = subscription.keys || {};
+  const p256dh = String(keys.p256dh || subscription.p256dh || "").trim();
+  const auth = String(keys.auth || subscription.auth || "").trim();
+  if (!p256dh || !auth) {
+    throw createHttpError(400, "Push subscription encryption keys are required.", "INVALID_PUSH_KEYS");
+  }
+  return {
+    endpoint,
+    p256dh,
+    auth,
+    expirationTime: subscription.expirationTime || subscription.expiration_time || null,
+  };
+}
+
+function subscribePush(user, payload = {}, req = null) {
+  const validated = validatePushSubscriptionPayload(payload);
+  const hash = endpointHash(validated.endpoint);
+  const records = readCollection(PUSH_SUBSCRIPTION_COLLECTION);
+  const existingIndex = records.findIndex((record) =>
+    !record.revokedAt &&
+    !record.revoked_at &&
+    !record.disabledAt &&
+    !record.disabled_at &&
+    (record.userId || record.user_id) === user.id &&
+    (record.endpointHash || record.endpoint_hash) === hash
+  );
+  const timestamp = now();
+  const organizationId = user.organizationId || user.organization_id || null;
+  const metadata = payload.metadata || payload.device || {};
+  const record = {
+    ...(existingIndex === -1 ? { id: crypto.randomUUID(), createdAt: timestamp, created_at: timestamp } : records[existingIndex]),
+    userId: user.id,
+    user_id: user.id,
+    organizationId,
+    organization_id: organizationId,
+    endpoint: validated.endpoint,
+    endpointHash: hash,
+    endpoint_hash: hash,
+    p256dh: validated.p256dh,
+    auth: validated.auth,
+    expirationTime: validated.expirationTime,
+    expiration_time: validated.expirationTime,
+    browser: metadata.browser || payload.browser || null,
+    device: metadata.device || payload.deviceName || payload.device_name || null,
+    userAgent: req?.get?.("user-agent") || metadata.userAgent || metadata.user_agent || null,
+    user_agent: req?.get?.("user-agent") || metadata.userAgent || metadata.user_agent || null,
+    failureCount: 0,
+    failure_count: 0,
+    revokedAt: null,
+    revoked_at: null,
+    disabledAt: null,
+    disabled_at: null,
+    updatedAt: timestamp,
+    updated_at: timestamp,
+  };
+  if (existingIndex === -1) {
+    records.push(record);
+  } else {
+    records[existingIndex] = record;
+  }
+  writeCollection(PUSH_SUBSCRIPTION_COLLECTION, records);
+  audit(req, "PUSH_SUBSCRIPTION_ENABLED", record.id, null, sanitizePushSubscription(record), "SUCCESS", { endpointHash: hash });
+  return sanitizePushSubscription(record);
+}
+
+function findOwnedPushSubscription(user, idOrEndpoint) {
+  const hash = idOrEndpoint && String(idOrEndpoint).startsWith("http") ? endpointHash(idOrEndpoint) : null;
+  return readCollection(PUSH_SUBSCRIPTION_COLLECTION).find((record) =>
+    (record.userId || record.user_id) === user.id &&
+    (record.id === idOrEndpoint || (hash && (record.endpointHash || record.endpoint_hash) === hash)) &&
+    !record.deletedAt &&
+    !record.deleted_at
+  ) || null;
+}
+
+function updatePushSubscription(id, updates) {
+  const records = readCollection(PUSH_SUBSCRIPTION_COLLECTION);
+  const index = records.findIndex((record) => record.id === id);
+  if (index === -1) return null;
+  records[index] = { ...records[index], ...updates, id, updatedAt: now(), updated_at: now() };
+  writeCollection(PUSH_SUBSCRIPTION_COLLECTION, records);
+  return records[index];
+}
+
+function unsubscribePush(user, payload = {}, req = null) {
+  const idOrEndpoint = payload.id || payload.subscriptionId || payload.subscription_id || payload.endpoint;
+  const record = findOwnedPushSubscription(user, idOrEndpoint);
+  if (!record) {
+    throw createHttpError(404, "Push subscription was not found.", "PUSH_SUBSCRIPTION_NOT_FOUND");
+  }
+  const timestamp = now();
+  const updated = updatePushSubscription(record.id, {
+    revokedAt: timestamp,
+    revoked_at: timestamp,
+    disabledAt: timestamp,
+    disabled_at: timestamp,
+    disabledReason: payload.reason || "user_unsubscribed",
+    disabled_reason: payload.reason || "user_unsubscribed",
+  });
+  audit(req, "PUSH_SUBSCRIPTION_DISABLED", record.id, sanitizePushSubscription(record), sanitizePushSubscription(updated), "SUCCESS", {
+    endpointHash: record.endpointHash || record.endpoint_hash,
+  });
+  return sanitizePushSubscription(updated);
+}
+
+function listPushSubscriptions(user, query = {}) {
+  const records = getActivePushSubscriptions(user.id);
+  const result = paginate(applyBasicFilters(records, { ...query, q: query.q || query.search }, ["browser", "device", "userAgent"]), query);
+  return { data: result.data.map(sanitizePushSubscription), meta: result.meta };
 }
 
 function listUserNotifications(user, query = {}) {
@@ -728,6 +937,40 @@ function updateJob(id, payload) {
 async function deliverJob(job, req = null) {
   const notification = readCollection(NOTIFICATION_COLLECTION).find((record) => record.id === (job.notificationId || job.notification_id));
   const user = getUserById(job.userId || job.user_id);
+  if (job.channel === "push") {
+    const subscriptions = Array.isArray(job.payload.to) ? job.payload.to : [];
+    const configured = Boolean(process.env.WEB_PUSH_VAPID_PUBLIC_KEY && process.env.WEB_PUSH_VAPID_PRIVATE_KEY && process.env.WEB_PUSH_VAPID_SUBJECT);
+    let sent = 0;
+    let skipped = 0;
+    for (const subscription of subscriptions) {
+      if (!subscription || subscription.forceGone || subscription.force_gone) {
+        if (subscription?.id) {
+          updatePushSubscription(subscription.id, {
+            disabledAt: now(),
+            disabled_at: now(),
+            disabledReason: "expired",
+            disabled_reason: "expired",
+          });
+        }
+        createDeliveryLog({ notification, user, channel: "push", status: "failed", provider: "web-push", errorMessage: "Subscription expired.", attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
+        continue;
+      }
+      if (!configured && process.env.WEB_PUSH_MOCK_DELIVERY !== "success") {
+        skipped += 1;
+        createDeliveryLog({ notification, user, channel: "push", status: "skipped", provider: "web-push", errorMessage: "Web Push transport is not configured.", attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
+        continue;
+      }
+      sent += 1;
+      updatePushSubscription(subscription.id, {
+        lastSuccessfulDeliveryAt: now(),
+        last_successful_delivery_at: now(),
+        failureCount: 0,
+        failure_count: 0,
+      });
+      createDeliveryLog({ notification, user, channel: "push", status: "sent", provider: "web-push", providerMessageId: notification?.id, attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
+    }
+    return { status: sent ? "sent" : "skipped", sent, skipped };
+  }
   if (job.channel === "email") {
     const result = await emailService.sendEmail({
       to: job.payload.to,
@@ -756,9 +999,10 @@ async function processQueue(limit = 25, req = null) {
   for (const job of jobs) {
     updateJob(job.id, { status: "sending" });
     try {
-      await deliverJob(job, req);
-      updateJob(job.id, { status: "sent", sentAt: now(), sent_at: now() });
-      results.push({ jobId: job.id, status: "sent" });
+      const delivery = await deliverJob(job, req);
+      const status = delivery?.status === "skipped" ? "skipped" : "sent";
+      updateJob(job.id, { status, sentAt: now(), sent_at: now() });
+      results.push({ jobId: job.id, status });
     } catch (error) {
       const retryCount = Number(job.retryCount || job.retry_count || 0) + 1;
       const failed = retryCount >= Number(job.maxRetries || job.max_retries || MAX_RETRIES);
@@ -800,7 +1044,7 @@ function getQueueStats() {
       summary[job.status] = (summary[job.status] || 0) + 1;
       return summary;
     },
-    { total: 0, queued: 0, retrying: 0, sending: 0, sent: 0, failed: 0 }
+    { total: 0, queued: 0, retrying: 0, sending: 0, sent: 0, skipped: 0, failed: 0 }
   );
 }
 
@@ -812,13 +1056,18 @@ module.exports = {
   getQueueStats,
   getRule,
   getUserPreferences,
+  getUnreadCount,
+  getVapidPublicKey,
   listDeliveryLogs,
+  listPushSubscriptions,
   listRules,
   listUserNotifications,
   markAllAsRead,
   markAsRead,
   processQueue,
   send,
+  subscribePush,
+  unsubscribePush,
   updateChannel,
   updateGlobalConfiguration,
   updatePreferences,

@@ -493,6 +493,9 @@ function isSessionExpired(session) {
   const settings = getActiveSecuritySettings();
   const expiresAt = session.expiresAt || session.expires_at;
   if (expiresAt && new Date(expiresAt).getTime() < Date.now()) return true;
+  if (session.rememberMe || session.remember_me) {
+    return false;
+  }
   const lastActivity = session.lastActivityAt || session.last_activity_at || session.lastUsedAt || session.last_used_at || session.lastSeenAt;
   if (!lastActivity) return false;
   return Date.now() - new Date(lastActivity).getTime() > settings.sessionTimeoutMinutes * 60 * 1000;

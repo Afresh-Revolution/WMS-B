@@ -78,14 +78,18 @@ usersRouter.get("/", authorize("users.view"), (req, res) => {
   });
 });
 
-usersRouter.post("/", authorize("users.create"), (req, res) => {
-  const result = createUserAccount(req.body || {}, req.user, req);
-  return res.status(201).json({
-    success: true,
-    message: "User created successfully.",
-    data: result.user,
-    meta: { provisioning: result.provisioning },
-  });
+usersRouter.post("/", authorize("users.create"), async (req, res, next) => {
+  try {
+    const result = await createUserAccount(req.body || {}, req.user, req);
+    return res.status(201).json({
+      success: true,
+      message: "User created successfully.",
+      data: result.user,
+      meta: { provisioning: result.provisioning },
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 usersRouter.get("/:id", authorize("users.view"), (req, res) => {

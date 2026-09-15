@@ -13,9 +13,13 @@ const { profileRouter } = require("./modules/profile/routes");
 const { technicalAuditRouter } = require("./modules/technicalAudit/routes");
 const { superAdminRouter } = require("./modules/superAdmin/routes");
 const { hrRouter } = require("./modules/hr/routes");
+const { hodRouter } = require("./modules/hod/routes");
+const { employeeRouter } = require("./modules/employee/routes");
+const { internRouter } = require("./modules/intern/routes");
 const { managerRouter } = require("./modules/manager/routes");
 const { secretaryRouter } = require("./modules/secretary/routes");
 const { accountantRouter } = require("./modules/accountant/routes");
+const { attendanceRouter } = require("./modules/attendance/routes");
 const { apiMetricsMiddleware } = require("./middleware/apiMetrics");
 const { technicalAuditMiddleware } = require("./middleware/technicalAudit");
 const { securityHeadersMiddleware, corsMiddleware, rateLimitMiddleware } = require("./middleware/productionSecurity");
@@ -53,11 +57,16 @@ function createApp() {
       status: "ok",
       version: process.env.npm_package_version || "1.0.0",
       docs: {
+        login: "/api/v1/auth/login",
         superAdmin: "/api/v1/super-admin/modules",
+        hod: "/api/v1/hod/dashboard",
+        employee: "/api/v1/employee/dashboard",
+        intern: "/api/v1/intern/dashboard",
         manager: "/api/v1/manager/dashboard",
         hr: "/api/v1/hr/dashboard",
         secretary: "/api/v1/secretary/dashboard",
         accountant: "/api/v1/accountant/dashboard",
+        attendance: "/api/v1/attendance/me/status",
       },
     });
   });
@@ -98,9 +107,16 @@ function createApp() {
   app.use("/api/super-admin", superAdminRouter);
   app.use("/api/profile", profileRouter);
   app.use("/api/hr", hrRouter);
+  app.use("/api/hod", hodRouter);
+  app.use("/api/employee", employeeRouter);
+  app.use("/api/employer", employeeRouter);
+  app.use("/api/intern", internRouter);
+  app.use("/api/nysc", internRouter);
+  app.use("/api/nysc-intern", internRouter);
   app.use("/api/manager", managerRouter);
   app.use("/api/secretary", secretaryRouter);
   app.use("/api/accountant", accountantRouter);
+  app.use("/api/attendance", attendanceRouter);
   app.use("/api/health", systemHealthRouter);
   app.use("/api/admin/system-health", systemHealthRouter);
   app.use("/api/admin/backups", backupsRouter);
@@ -135,9 +151,15 @@ function createApp() {
       (req.originalUrl.startsWith("/api/v1") ||
         req.originalUrl.startsWith("/api/profile") ||
         req.originalUrl.startsWith("/api/hr") ||
+        req.originalUrl.startsWith("/api/hod") ||
+        req.originalUrl.startsWith("/api/employee") ||
+        req.originalUrl.startsWith("/api/employer") ||
+        req.originalUrl.startsWith("/api/intern") ||
+        req.originalUrl.startsWith("/api/nysc") ||
         req.originalUrl.startsWith("/api/manager") ||
         req.originalUrl.startsWith("/api/secretary") ||
         req.originalUrl.startsWith("/api/accountant") ||
+        req.originalUrl.startsWith("/api/attendance") ||
         req.originalUrl.startsWith("/api/admin") ||
         req.originalUrl.startsWith("/api/integrations") ||
         req.originalUrl.startsWith("/api/payments") ||

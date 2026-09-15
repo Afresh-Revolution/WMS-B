@@ -99,7 +99,7 @@ hrRouter.get("/employees", handle((req, res) => {
   const result = hrService.listEmployees(req.query, req.user);
   return send(res, "HR employees loaded.", result.data, result.meta);
 }));
-hrRouter.post("/employees", handle((req, res) => res.status(201).json({ success: true, message: "HR employee created.", data: hrService.createEmployee(req.body || {}, req), meta: {} })));
+hrRouter.post("/employees", handle(async (req, res) => res.status(201).json({ success: true, message: "HR employee created.", data: await hrService.createEmployee(req.body || {}, req), meta: {} })));
 hrRouter.get("/employees/:id", handle((req, res) => {
   const profile = hrService.getEmployeeProfile(req.params.id, req.user);
   return profile ? send(res, "HR employee loaded.", profile) : notFound(res, "EMPLOYEE_NOT_FOUND");

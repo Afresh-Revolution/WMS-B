@@ -31,7 +31,8 @@ Primary auth endpoints are mounted at `/api/v1/auth`.
 | --- | --- | --- |
 | GET | `/api/v1/auth/bootstrap/status` | Check whether Super Admin setup is complete |
 | POST | `/api/v1/auth/bootstrap` | Create the first Super Admin |
-| POST | `/api/v1/auth/login` | Login |
+| POST | `/api/v1/auth/login` | Shared login for every workspace role, including Super Admin |
+| GET | `/api/v1/auth/login-options` | Public login-page options for the shared sign-in screen |
 | POST | `/api/v1/auth/mfa/verify` | Verify MFA challenge |
 | POST | `/api/v1/auth/refresh` | Refresh access token |
 | POST | `/api/v1/auth/logout` | Logout current session |
@@ -80,7 +81,7 @@ Mounted at `/api/v1/super-admin` with the same dashboard modules shown in the Su
 | GET | `/api/v1/super-admin/status` | Alias for system maintenance status |
 | GET | `/api/v1/super-admin/health` | Alias for Super Admin system health |
 
-The same namespace is also available at `/api/super-admin` for legacy frontend clients. The existing `/api/superadmin` auth routes remain dedicated to Super Admin bootstrap/login/logout/password actions.
+The same namespace is also available at `/api/super-admin` for legacy frontend clients. Super Admin signs in through the shared login page at `POST /api/v1/auth/login`, the same endpoint used by every other role. The existing `/api/superadmin` auth routes remain as legacy Super Admin-only aliases.
 
 The namespace reuses the same underlying services as the primary `/api/v1` routes. For example:
 
@@ -344,6 +345,44 @@ Mounted at `/api/v1/users`.
 | GET | `/api/v1/users/:id/login-history` |
 | GET | `/api/v1/users/:id/activity` |
 
+## Employees
+
+The Super Admin Employees page uses `/api/v1/employees`. This is the list/create API for adding a person. Nested payroll and discipline routes on the same prefix still work.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/employees` | List employees |
+| POST | `/api/v1/employees` | Add a person |
+| GET | `/api/v1/employees/:id` | Get one employee profile |
+| PATCH | `/api/v1/employees/:id` | Update an employee |
+| PUT | `/api/v1/employees/:id` | Update an employee |
+| DELETE | `/api/v1/employees/:id` | Deactivate an employee |
+| POST | `/api/v1/employees/:id/deactivate` | Deactivate |
+| POST | `/api/v1/employees/:id/activate` | Activate |
+| POST | `/api/v1/employees/:id/suspend` | Suspend |
+| POST | `/api/v1/employees/:id/terminate` | Terminate |
+| POST | `/api/v1/employees/:id/transfer` | Transfer department/location |
+| POST | `/api/v1/employees/:id/promote` | Promote |
+| POST | `/api/v1/employees/:id/reset-password` | Reset login password |
+
+The same routes are also mounted at `/api/v1/super-admin/employees`.
+
+Add-person body can be a nested staff payload or a flat form:
+
+```json
+{
+  "fullName": "Lena Fisher",
+  "email": "lena.f@afresh.com",
+  "phone": "08030000000",
+  "jobTitle": "Hardware Lead",
+  "department": "Hardware",
+  "location": "Remote",
+  "role": "employee"
+}
+```
+
+If `email` is present, the backend also creates a dashboard login with the submitted `role` (`employee`, `hr`, `hod`, `manager`, `accountant`, `secretary`, `intern`, `nysc_intern`, and aliases such as `NYSC Intern`). Role permissions are assigned automatically so the new account can sign in on the shared login page and land in the matching workspace. If no password is sent, a temporary password is returned in `meta.temporaryPassword`.
+
 ## Roles And Permissions
 
 | Method | Endpoint |
@@ -421,6 +460,11 @@ Mounted at `/api/hr` and `/api/v1/hr`.
 | GET | `/api/v1/hr/salary-adjustments` |
 | POST | `/api/v1/hr/salary-adjustments` |
 | PATCH | `/api/v1/hr/salary-adjustments/:id/approve` |
+| PATCH | `/api/v1/hr/salary-adjustments/:id/reject` |
+| GET | `/api/v1/hr/salary-increments` |
+| POST | `/api/v1/hr/salary-increments` |
+| PATCH | `/api/v1/hr/salary-increments/:id/approve` |
+| PATCH | `/api/v1/hr/salary-increments/:id/reject` |
 | GET | `/api/v1/hr/attendance` |
 | PATCH | `/api/v1/hr/attendance/:id/correct` |
 | GET | `/api/v1/hr/performance` |
@@ -434,6 +478,26 @@ Mounted at `/api/hr` and `/api/v1/hr`.
 | GET | `/api/v1/hr/reports` |
 | GET | `/api/v1/hr/audit-logs` |
 | GET | `/api/v1/hr/approval-queue` |
+
+## Salary Increments
+
+The Super Admin Salary Increments page can list and create through either path. Both read and write the same underlying records, so a recommendation created on one endpoint appears on the other.
+
+Create accepts the Afresh form fields (`employeeName`, `department`, `currentSalary`, `proposedSalary`, `effectiveDate` such as `12/17/2026`) as well as `employeeId` / `newSalary`. Super Admin tokens are allowed on these HR writes.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/salary-increments` | List salary increment recommendations |
+| POST | `/api/v1/salary-increments` | Submit a recommendation |
+| GET | `/api/v1/salary-increments/:id` | Get one recommendation |
+| PATCH | `/api/v1/salary-increments/:id/approve` | Approve |
+| POST | `/api/v1/salary-increments/:id/approve` | Approve |
+| PATCH | `/api/v1/salary-increments/:id/reject` | Reject |
+| POST | `/api/v1/salary-increments/:id/reject` | Reject |
+| GET | `/api/v1/hr/salary-adjustments` | Same list via the HR module |
+| POST | `/api/v1/hr/salary-adjustments` | Same create via the HR module |
+
+The same salary-increments routes are also mounted at `/api/v1/super-admin/salary-increments`.
 
 ## Reports
 

@@ -47,8 +47,8 @@ employersRouter.get("/", (req, res) => {
   });
 });
 
-employersRouter.post("/", (req, res) => {
-  const staff = createStaff(req.body, req.user, req);
+employersRouter.post("/", async (req, res) => {
+  const staff = await createStaff(req.body, req.user, req);
   recordOperationalAudit({
     user: req.user,
     action: "Created Staff",
@@ -77,8 +77,8 @@ employersRouter.get("/export", (req, res) => {
   return res.send(result.csv);
 });
 
-employersRouter.post("/import", (req, res) => {
-  const result = bulkImport(req.body || {}, req.user, req);
+employersRouter.post("/import", async (req, res) => {
+  const result = await bulkImport(req.body || {}, req.user, req);
   recordOperationalAudit({
     user: req.user,
     action: req.body?.confirm ? "Imported Staff Directory" : "Previewed Staff Import",

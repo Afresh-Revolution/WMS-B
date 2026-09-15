@@ -1,9 +1,25 @@
 const crypto = require("crypto");
 const { hashPassword } = require("../../auth/passwords");
 const { revokeUserSessions } = require("../../auth/sessionStore");
+const postgresUserStore = require("../../auth/postgresUserStore");
 const { createUser, getUserById, listUsers, sanitizeUser, updateUser, updateUserPassword } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
+const { getRolePermissions, ROLE_DEFINITIONS } = require("../../constants/rbac");
 const { applyBasicFilters, paginate, sortRecords } = require("../../utils/query");
+
+const ROLE_ALIASES = Object.freeze({
+  nysc: "nysc_intern",
+  nysc_member: "nysc_intern",
+  nysc_interns: "nysc_intern",
+  intern_nysc: "nysc_intern",
+  head_of_department: "hod",
+  head_of_dept: "hod",
+  dept_manager: "department_manager",
+  departmental_manager: "department_manager",
+  teamlead: "team_leader",
+  team_lead: "team_leader",
+  other_staff: "employee",
+});
 
 const STAFF_COLLECTIONS = Object.freeze({
   employee: "employees",
@@ -38,11 +54,40 @@ function now() {
 
 function normalizeStaffType(value) {
   const normalized = String(value || "employee").toLowerCase().replace(/[\s-]+/g, "_");
-  if (normalized === "nysc_member") {
+  if (normalized === "nysc_member" || normalized === "nysc_intern") {
     return "nysc";
   }
 
   return STAFF_COLLECTIONS[normalized] ? normalized : "employee";
+}
+
+function normalizeRoleKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function resolveAssignedRole(roleValue) {
+  const requested = normalizeRoleKey(roleValue) || "employee";
+  const aliased = ROLE_ALIASES[requested] || requested;
+  if (ROLE_DEFINITIONS[aliased]) {
+    return { key: aliased, permissions: getRolePermissions(aliased) };
+  }
+
+  const byName = Object.values(ROLE_DEFINITIONS).find(
+    (role) => normalizeRoleKey(role.name) === aliased || normalizeRoleKey(role.key) === aliased
+  );
+  if (byName) {
+    return { key: byName.key, permissions: byName.permissions };
+  }
+
+  const error = new Error(`Unknown role "${roleValue}".`);
+  error.statusCode = 400;
+  error.publicMessage = error.message;
+  error.code = "INVALID_ROLE";
+  throw error;
+}
+
+function createAuthUser(payload) {
+  return postgresUserStore.isEnabled() ? postgresUserStore.createUser(payload) : createUser(payload);
 }
 
 function getCollectionForStaffType(staffType) {
@@ -370,6 +415,7 @@ function normalizeCreatePayload(body = {}) {
 
   const fullName =
     body.fullName ||
+    body.name ||
     personal.fullName ||
     [personal.firstName || body.firstName, personal.middleName || body.middleName, personal.lastName || body.lastName]
       .filter(Boolean)
@@ -389,8 +435,8 @@ function normalizeCreatePayload(body = {}) {
       profilePhoto: personal.profilePhoto || body.profilePhoto,
       gender: personal.gender || body.gender,
       dateOfBirth: personal.dateOfBirth || body.dateOfBirth,
-      phone: personal.phone || body.phone,
-      email: personal.email || body.email,
+      phone: personal.phone || body.phone || body.phoneNumber,
+      email: personal.email || body.email || body.workEmail,
       address: personal.address || body.address,
       state: personal.state || body.state,
       lga: personal.lga || body.lga,
@@ -403,8 +449,8 @@ function normalizeCreatePayload(body = {}) {
       institution: employment.institution || body.institution,
       course: employment.course || body.course,
       fieldOfStudy: employment.fieldOfStudy || body.fieldOfStudy,
-      jobTitle: employment.jobTitle || body.jobTitle,
-      position: employment.position || body.position,
+      jobTitle: employment.jobTitle || body.jobTitle || body.title || body.position,
+      position: employment.position || body.position || body.jobTitle || body.title,
       positionId: employment.positionId || body.positionId,
       department: employment.department || body.department,
       departmentId: employment.departmentId || body.departmentId,
@@ -440,7 +486,7 @@ function normalizeCreatePayload(body = {}) {
   };
 }
 
-function createSystemUserIfRequested({ record, systemAccess }) {
+async function createSystemUserIfRequested({ record, systemAccess }) {
   const wantsAccess =
     systemAccess.createAccount ||
     systemAccess.dashboardAccess ||
@@ -470,21 +516,38 @@ function createSystemUserIfRequested({ record, systemAccess }) {
     throw error;
   }
 
-  return createUser({
+  const assignedRole = resolveAssignedRole(systemAccess.role || record.role || "employee");
+  const permissions =
+    Array.isArray(systemAccess.permissions) && systemAccess.permissions.length > 0
+      ? systemAccess.permissions
+      : assignedRole.permissions;
+
+  return createAuthUser({
     name: record.fullName || record.name,
+    fullName: record.fullName || record.name,
     email,
     passwordHash: hashPassword(password),
-    role: systemAccess.role || record.role || "employee",
-    permissions: Array.isArray(systemAccess.permissions) ? systemAccess.permissions : [],
+    role: assignedRole.key,
+    roleId: assignedRole.key,
+    permissions,
     status: "active",
+    accountType: assignedRole.key === "superadmin" ? "SUPER_ADMIN" : assignedRole.key === "admin" ? "ADMIN" : "STAFF",
+    mustChangePassword: Boolean(systemAccess.mustChangePassword),
+    departmentId: record.departmentId || null,
+    employeeId: record.employeeId || record.id || null,
   });
 }
 
-function createStaff(body, actor, req) {
+async function createStaff(body, actor, req) {
   const { staffType, record, systemAccess, documents } = normalizeCreatePayload(body);
+  const assignedRole = resolveAssignedRole(systemAccess.role || record.role || body.role || "employee");
+  record.role = assignedRole.key;
+  record.permissions = Array.isArray(systemAccess.permissions) && systemAccess.permissions.length > 0
+    ? systemAccess.permissions
+    : assignedRole.permissions;
   const collection = getCollectionForStaffType(staffType);
   const timestamp = now();
-  const user = createSystemUserIfRequested({ record, systemAccess });
+  const user = await createSystemUserIfRequested({ record, systemAccess });
   const staffRecord = {
     id: crypto.randomUUID(),
     ...record,
@@ -837,7 +900,7 @@ function previewImport(rows = []) {
   });
 }
 
-function bulkImport({ rows = [], confirm }, actor, req) {
+async function bulkImport({ rows = [], confirm }, actor, req) {
   const preview = previewImport(rows);
   if (!confirm) {
     return { preview, imported: [], requiresConfirmation: true };
@@ -845,7 +908,7 @@ function bulkImport({ rows = [], confirm }, actor, req) {
 
   const imported = [];
   for (const item of preview.filter((entry) => entry.valid)) {
-    imported.push(createStaff(item.row, actor, req));
+    imported.push(await createStaff(item.row, actor, req));
   }
 
   return { preview, imported, requiresConfirmation: false };

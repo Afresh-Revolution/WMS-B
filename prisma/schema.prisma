@@ -805,6 +805,7 @@ model Notification {
   userId              String?   @map("user_id") @db.Uuid
   recipientUserId     String?   @map("recipient_user_id") @db.Uuid
   recipientEmployeeId String?   @map("recipient_employee_id") @db.Uuid
+  organizationId      String?   @map("organization_id") @db.Uuid
   type                String
   title               String
   message             String?
@@ -817,6 +818,9 @@ model Notification {
   priority            String    @default("normal")
   isRead              Boolean   @default(false) @map("is_read")
   data                Json      @default("{}")
+  metadata            Json      @default("{}")
+  destinationUrl      String?   @map("destination_url")
+  idempotencyKey      String?   @map("idempotency_key")
   readAt              DateTime? @map("read_at")
   expiresAt           DateTime? @map("expires_at")
   deletedAt           DateTime? @map("deleted_at")
@@ -830,6 +834,7 @@ model Notification {
 
   @@index([userId, isRead, createdAt])
   @@index([entityType, entityId])
+  @@unique([idempotencyKey])
   @@map("notifications")
 }
 
@@ -850,6 +855,7 @@ model NotificationRule {
   inAppEnabled    Boolean  @default(true) @map("in_app_enabled")
   emailEnabled    Boolean  @default(true) @map("email_enabled")
   smsEnabled      Boolean  @default(false) @map("sms_enabled")
+  pushEnabled     Boolean  @default(true) @map("push_enabled")
   priority         String   @default("normal")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -914,6 +920,127 @@ model NotificationJob {
 
   @@index([status, nextRunAt])
   @@map("notification_jobs")
+}
+
+model PushSubscription {
+  id                       String    @id @default(uuid()) @db.Uuid
+  userId                   String    @map("user_id") @db.Uuid
+  organizationId           String?   @map("organization_id") @db.Uuid
+  endpoint                 String
+  endpointHash             String    @map("endpoint_hash")
+  p256dh                   String
+  auth                     String
+  expirationTime           DateTime? @map("expiration_time")
+  browser                  String?
+  device                   String?
+  userAgent                String?   @map("user_agent")
+  lastSuccessfulDeliveryAt DateTime? @map("last_successful_delivery_at")
+  failureCount             Int       @default(0) @map("failure_count")
+  disabledAt               DateTime? @map("disabled_at")
+  disabledReason           String?   @map("disabled_reason")
+  revokedAt                DateTime? @map("revoked_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, disabledAt, revokedAt])
+  @@index([organizationId, updatedAt])
+  @@map("push_subscriptions")
+}
+
+model AttendanceLocation {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  branchId       String?   @map("branch_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  departmentIds  Json      @default("[]") @map("department_ids")
+  employeeIds    Json      @default("[]") @map("employee_ids")
+  name           String
+  description    String?
+  address        String?
+  latitude       Decimal   @db.Decimal(10, 7)
+  longitude      Decimal   @db.Decimal(10, 7)
+  radiusMeters   Int       @map("radius_meters")
+  timezone       String    @default("Africa/Lagos")
+  active         Boolean   @default(true)
+  status         String    @default("active")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([organizationId, active, status])
+  @@index([departmentId, active])
+  @@map("attendance_locations")
+}
+
+model AttendanceSchedule {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  branchId       String?   @map("branch_id") @db.Uuid
+  departmentId   String?   @map("department_id") @db.Uuid
+  departmentIds  Json      @default("[]") @map("department_ids")
+  employeeIds    Json      @default("[]") @map("employee_ids")
+  locationIds    Json      @default("[]") @map("location_ids")
+  name           String
+  description    String?
+  openingTime    String    @default("08:00") @map("opening_time")
+  lateAfterTime  String    @default("09:30") @map("late_after_time")
+  closingTime    String    @default("17:00") @map("closing_time")
+  daysOfWeek     Json      @default("[1,2,3,4,5]") @map("days_of_week")
+  timezone       String?
+  startDate      DateTime? @map("start_date")
+  endDate        DateTime? @map("end_date")
+  active         Boolean   @default(true)
+  status         String    @default("active")
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedBy      String?   @map("updated_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([organizationId, active, status])
+  @@index([departmentId, active])
+  @@map("attendance_schedules")
+}
+
+model Attendance {
+  id                       String    @id @default(uuid()) @db.Uuid
+  organizationId           String?   @map("organization_id") @db.Uuid
+  userId                   String?   @map("user_id") @db.Uuid
+  employeeId               String    @map("employee_id") @db.Uuid
+  departmentId             String?   @map("department_id") @db.Uuid
+  locationId               String?   @map("location_id") @db.Uuid
+  scheduleId               String?   @map("schedule_id") @db.Uuid
+  date                     DateTime
+  workDate                 DateTime? @map("work_date")
+  checkIn                  DateTime? @map("check_in")
+  checkInAt                DateTime? @map("check_in_at")
+  checkOut                 DateTime? @map("check_out")
+  latitude                 Decimal?  @db.Decimal(10, 7)
+  longitude                Decimal?  @db.Decimal(10, 7)
+  accuracyMeters           Decimal?  @map("accuracy_meters") @db.Decimal(10, 2)
+  calculatedDistanceMeters Decimal?  @map("calculated_distance_meters") @db.Decimal(10, 2)
+  clientLocationTimestamp  DateTime? @map("client_location_timestamp")
+  clientTimezone           String?   @map("client_timezone")
+  timezone                 String?
+  status                   String    @default("PRESENT")
+  attendanceStatus         String?   @map("attendance_status")
+  riskFlags                Json      @default("[]") @map("risk_flags")
+  source                   String?
+  notes                    String?
+  device                   Json?
+  idempotencyKey           String?   @map("idempotency_key")
+  correctedBy              String?   @map("corrected_by") @db.Uuid
+  correctionReason         String?   @map("correction_reason")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  @@unique([employeeId, date])
+  @@index([employeeId, date])
+  @@index([organizationId, workDate])
+  @@index([locationId, workDate])
+  @@map("attendance")
 }
 
 model AuditLog {

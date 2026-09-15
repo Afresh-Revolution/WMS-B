@@ -35,12 +35,22 @@ async function bootstrapSuperadmin(baseUrl) {
   return response.json();
 }
 
+function isoDate(offsetDays = 0) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 test("runs bill lifecycle with calculated totals, duplicate protection, approval, payment, and accounting trace", async (t) => {
   const app = createTestApp(t);
   const server = app.listen(0);
   t.after(() => server.close());
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const dueDate = isoDate(30);
+  const scheduledPaymentDate = isoDate();
+  const partialPaymentDate = isoDate();
+  const finalPaymentDate = isoDate();
   const auth = await bootstrapSuperadmin(baseUrl);
   const adminHeaders = {
     "content-type": "application/json",
@@ -109,7 +119,7 @@ test("runs bill lifecycle with calculated totals, duplicate protection, approval
       vendorId: vendor.data.id,
       invoiceNumber: "INV-2026-080",
       amount: 1,
-      dueDate: "2026-08-31",
+      dueDate,
       category: "Utilities",
       departmentId: department.data.id,
       status: "PAID",
@@ -141,7 +151,7 @@ test("runs bill lifecycle with calculated totals, duplicate protection, approval
       vendorId: vendor.data.id,
       invoiceNumber: "INV-2026-080",
       amount: 850000,
-      dueDate: "2026-08-31",
+      dueDate,
       category: "Utilities",
     }),
   });
@@ -177,12 +187,12 @@ test("runs bill lifecycle with calculated totals, duplicate protection, approval
   const scheduleResponse = await fetch(`${baseUrl}/api/v1/bills/${created.data.id}/schedule`, {
     method: "POST",
     headers: adminHeaders,
-    body: JSON.stringify({ scheduledPaymentDate: "2026-08-20" }),
+    body: JSON.stringify({ scheduledPaymentDate }),
   });
   assert.equal(scheduleResponse.status, 200);
   const scheduled = await scheduleResponse.json();
   assert.equal(scheduled.data.status, "SCHEDULED");
-  assert.equal(scheduled.data.scheduledPaymentDate, "2026-08-20");
+  assert.equal(scheduled.data.scheduledPaymentDate, scheduledPaymentDate);
 
   const commentResponse = await fetch(`${baseUrl}/api/v1/bills/${created.data.id}/comments`, {
     method: "POST",
@@ -209,7 +219,7 @@ test("runs bill lifecycle with calculated totals, duplicate protection, approval
     body: JSON.stringify({
       amount: 400000,
       transactionReference: "TXN-400",
-      paymentDate: "2026-08-21",
+      paymentDate: partialPaymentDate,
     }),
   });
   assert.equal(partialPaymentResponse.status, 201);
@@ -232,7 +242,7 @@ test("runs bill lifecycle with calculated totals, duplicate protection, approval
     body: JSON.stringify({
       amount: 450000,
       transactionReference: "TXN-450",
-      paymentDate: "2026-08-22",
+      paymentDate: finalPaymentDate,
     }),
   });
   assert.equal(finalPaymentResponse.status, 201);

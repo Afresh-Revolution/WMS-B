@@ -80,6 +80,47 @@ notificationsRouter.get(
 );
 
 notificationsRouter.get(
+  "/unread-count",
+  handle((req, res) => send(res, "Unread notification count loaded.", notificationService.getUnreadCount(req.user)))
+);
+
+notificationsRouter.get(
+  "/push/public-key",
+  handle((_req, res) => send(res, "Web Push public key loaded.", {
+    publicKey: notificationService.getVapidPublicKey(),
+    configured: Boolean(notificationService.getVapidPublicKey()),
+  }))
+);
+
+notificationsRouter.get(
+  "/push/subscriptions",
+  handle((req, res) => {
+    const result = notificationService.listPushSubscriptions(req.user, req.query);
+    return send(res, "Push subscriptions loaded.", result.data, result.meta);
+  })
+);
+
+notificationsRouter.post(
+  "/push/subscribe",
+  handle((req, res) => res.status(201).json({
+    success: true,
+    message: "Push subscription saved.",
+    data: notificationService.subscribePush(req.user, req.body || {}, req),
+    meta: {},
+  }))
+);
+
+notificationsRouter.post(
+  "/push/unsubscribe",
+  handle((req, res) => send(res, "Push subscription removed.", notificationService.unsubscribePush(req.user, req.body || {}, req)))
+);
+
+notificationsRouter.delete(
+  "/push/subscriptions/:id",
+  handle((req, res) => send(res, "Push subscription removed.", notificationService.unsubscribePush(req.user, { id: req.params.id }, req)))
+);
+
+notificationsRouter.get(
   "/preferences",
   handle((req, res) => send(res, "Notification preferences loaded.", notificationService.getUserPreferences(req.user.id)))
 );

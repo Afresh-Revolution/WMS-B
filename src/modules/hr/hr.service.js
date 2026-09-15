@@ -80,6 +80,7 @@ function createHttpError(statusCode, message, code, details = {}) {
 
 function assertHrAccess(user, permission) {
   const role = String(user?.role || "").toLowerCase();
+  if (role === "superadmin") return;
   if (role === "hr" && (!permission || hasPermission(user, permission))) return;
   throw createHttpError(403, "Forbidden.", "FORBIDDEN");
 }
@@ -123,7 +124,83 @@ function activeRecords(collection, user = null) {
 }
 
 function getEmployee(id, user = null) {
-  return activeRecords("employees", user).find((employee) => employee.id === id) || null;
+  if (!id) return null;
+  return activeRecords("employees", user).find((employee) => employee.id === id || employee.employeeId === id || employee.employee_id === id) || null;
+}
+
+function uniqueSalaryRecords(user) {
+  const records = [...activeRecords("salary_adjustments", user), ...activeRecords("salary_increments", user)];
+  const unique = [];
+  const seen = new Set();
+  for (const record of records) {
+    if (seen.has(record.id)) continue;
+    seen.add(record.id);
+    unique.push(record);
+  }
+  return unique;
+}
+
+function parseMoney(value) {
+  const parsed = Number(String(value ?? "").replace(/[$,₦\s]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseDateInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return now().slice(0, 10);
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const [, month, day, year] = slash;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return raw;
+}
+
+function findEmployeeForSalary(payload, user) {
+  const byId = getEmployee(payload.employeeId || payload.employee_id, user);
+  if (byId) return byId;
+
+  const name = String(payload.employeeName || payload.employee_name || payload.name || payload.employee || "").trim().toLowerCase();
+  if (!name) return null;
+
+  const department = String(payload.department || payload.departmentName || payload.department_name || "").trim().toLowerCase();
+  const employees = activeRecords("employees", user);
+  const matches = employees.filter((employee) => {
+    const employeeName = String(getEmployeeName(employee) || "").trim().toLowerCase();
+    return employeeName === name || employeeName.includes(name);
+  });
+  if (department) {
+    const inDepartment = matches.find((employee) =>
+      String(employee.department || employee.departmentName || employee.department_name || "").trim().toLowerCase() === department
+    );
+    if (inDepartment) return inDepartment;
+  }
+  return matches[0] || null;
+}
+
+function normalizeSalaryIncrement(record) {
+  const currentSalary = toNumber(record.currentSalary ?? record.current_salary ?? record.oldSalary ?? record.old_salary);
+  const proposedSalary = toNumber(record.proposedSalary ?? record.proposed_salary ?? record.newSalary ?? record.new_salary);
+  return {
+    ...record,
+    employeeId: record.employeeId || record.employee_id || null,
+    employeeName: record.employeeName || record.employee_name || record.name || null,
+    department: record.department || record.departmentName || record.department_name || null,
+    currentSalary,
+    current_salary: currentSalary,
+    oldSalary: currentSalary,
+    old_salary: currentSalary,
+    proposedSalary,
+    proposed_salary: proposedSalary,
+    newSalary: proposedSalary,
+    new_salary: proposedSalary,
+    difference: record.difference ?? proposedSalary - currentSalary,
+    percentage: record.percentage ?? (currentSalary ? Number((((proposedSalary - currentSalary) / currentSalary) * 100).toFixed(2)) : 0),
+    effectiveDate: record.effectiveDate || record.effective_date || null,
+    status: record.status || "PENDING",
+  };
 }
 
 function getEmployeeName(employee) {
@@ -895,7 +972,7 @@ function getDashboard(user, query = {}) {
   const employees = activeRecords("employees", user);
   const leaveRequests = activeRecords("leave_requests", user);
   const promotions = activeRecords("promotions", user);
-  const salaryAdjustments = activeRecords("salary_adjustments", user).concat(activeRecords("salary_increments", user));
+  const salaryAdjustments = uniqueSalaryRecords(user);
   const discipline = activeRecords("disciplinary_cases", user);
   const documents = activeRecords("employee_documents", user);
   const onboarding = activeRecords("onboarding_records", user);
@@ -1049,10 +1126,10 @@ function listEmployees(query, user) {
   return result;
 }
 
-function createEmployee(payload, req) {
+async function createEmployee(payload, req) {
   assertHrAccess(req.user, "employees.create");
   assertNoSystemAccessMutation(payload);
-  const record = staffService.createStaff({ ...payload, staffType: payload.staffType || "employee" }, req.user, req);
+  const record = await staffService.createStaff({ ...payload, staffType: payload.staffType || "employee" }, req.user, req);
   audit(req, "Employee Created", "Employee", record.id, null, record);
   return record;
 }
@@ -1315,61 +1392,114 @@ function rejectPromotion(id, payload, req) {
 
 function listSalaryAdjustments(query, user) {
   assertHrAccess(user, "salary_increments.view");
-  return listCollection("salary_adjustments", query, user, ["employeeName", "adjustmentType", "reason", "status"]);
+  const unique = uniqueSalaryRecords(user).map(normalizeSalaryIncrement);
+  const result = paginate(
+    applyBasicFilters(unique, { ...query, q: query.q || query.search }, ["employeeName", "employee_name", "name", "department", "adjustmentType", "reason", "status"]),
+    query
+  );
+  result.data = result.data.map(normalizeSalaryIncrement);
+  return result;
 }
 
 function createSalaryAdjustment(payload, req) {
   assertHrAccess(req.user, "salary_increments.create");
-  const employee = getEmployee(payload.employeeId || payload.employee_id, req.user);
-  if (!employee) throw createHttpError(404, "Employee was not found.", "EMPLOYEE_NOT_FOUND");
-  const oldSalary = toNumber(employee.salary || employee.basicSalary || employee.basic_salary);
-  const newSalary = toNumber(payload.newSalary ?? payload.new_salary);
+  const employee = findEmployeeForSalary(payload, req.user);
+  const employeeName =
+    (employee && getEmployeeName(employee)) ||
+    String(payload.employeeName || payload.employee_name || payload.name || payload.employee || "").trim();
+  if (!employee && !employeeName) {
+    throw createHttpError(400, "Employee name is required.", "EMPLOYEE_NAME_REQUIRED");
+  }
+
+  const oldSalary = parseMoney(
+    payload.currentSalary ?? payload.current_salary ?? payload.oldSalary ?? payload.old_salary ?? employee?.salary ?? employee?.basicSalary ?? employee?.basic_salary
+  );
+  const newSalary = parseMoney(payload.proposedSalary ?? payload.proposed_salary ?? payload.newSalary ?? payload.new_salary);
+  if (!newSalary) {
+    throw createHttpError(400, "Proposed salary is required.", "PROPOSED_SALARY_REQUIRED");
+  }
+
+  const department =
+    payload.department ||
+    payload.departmentName ||
+    payload.department_name ||
+    employee?.department ||
+    employee?.departmentName ||
+    null;
+  const effectiveDate = parseDateInput(payload.effectiveDate || payload.effective_date || payload.date);
+  const difference = newSalary - oldSalary;
+  const percentage = oldSalary ? Number(((difference / oldSalary) * 100).toFixed(2)) : 0;
   const adjustment = createRecord("salary_adjustments", {
-    employeeId: employee.id,
-    employee_id: employee.id,
-    employeeName: getEmployeeName(employee),
-    employee_name: getEmployeeName(employee),
+    employeeId: employee?.id || null,
+    employee_id: employee?.id || null,
+    employeeName,
+    employee_name: employeeName,
+    department,
+    departmentName: department,
+    department_name: department,
     adjustmentType: normalizeUpperStatus(payload.adjustmentType || payload.adjustment_type, "INCREMENT"),
     adjustment_type: normalizeUpperStatus(payload.adjustmentType || payload.adjustment_type, "INCREMENT"),
+    currentSalary: oldSalary,
+    current_salary: oldSalary,
     oldSalary,
     old_salary: oldSalary,
+    proposedSalary: newSalary,
+    proposed_salary: newSalary,
     newSalary,
     new_salary: newSalary,
-    difference: newSalary - oldSalary,
-    percentage: oldSalary ? Number((((newSalary - oldSalary) / oldSalary) * 100).toFixed(2)) : 0,
-    reason: payload.reason || null,
-    effectiveDate: payload.effectiveDate || payload.effective_date || now().slice(0, 10),
-    effective_date: payload.effectiveDate || payload.effective_date || now().slice(0, 10),
+    difference,
+    percentage,
+    reason: payload.reason || payload.recommendation || null,
+    effectiveDate,
+    effective_date: effectiveDate,
     status: "PENDING",
     requestedBy: req.user.id,
     requested_by: req.user.id,
   }, req.user);
+  appendRecord("salary_increments", { ...adjustment });
   audit(req, "Salary Adjustment Created", "SalaryAdjustment", adjustment.id, null, adjustment);
-  return adjustment;
+  return normalizeSalaryIncrement(adjustment);
+}
+
+function findSalaryAdjustmentRecord(id, user) {
+  return (
+    activeRecords("salary_adjustments", user).find((item) => item.id === id) ||
+    activeRecords("salary_increments", user).find((item) => item.id === id) ||
+    null
+  );
+}
+
+function syncSalaryIncrementStatus(id, updates) {
+  writeCollectionRecord("salary_adjustments", id, () => updates);
+  writeCollectionRecord("salary_increments", id, () => updates);
 }
 
 function approveSalaryAdjustment(id, payload, req) {
   assertHrAccess(req.user, "salary_increments.approve");
-  const adjustment = activeRecords("salary_adjustments", req.user).find((item) => item.id === id);
+  const adjustment = findSalaryAdjustmentRecord(id, req.user);
   if (!adjustment) return null;
   if (normalizeUpperStatus(adjustment.status) !== "PENDING") throw createHttpError(409, "Only pending salary adjustments can be approved.", "SALARY_ADJUSTMENT_NOT_PENDING");
   const employeeId = adjustment.employeeId || adjustment.employee_id;
-  const employeeUpdate = writeCollectionRecord("employees", employeeId, () => ({
-    salary: adjustment.newSalary ?? adjustment.new_salary,
-    basicSalary: adjustment.newSalary ?? adjustment.new_salary,
-    basic_salary: adjustment.newSalary ?? adjustment.new_salary,
-  }));
-  const result = writeCollectionRecord("salary_adjustments", id, () => ({
+  const employeeUpdate = employeeId
+    ? writeCollectionRecord("employees", employeeId, () => ({
+        salary: adjustment.newSalary ?? adjustment.proposedSalary ?? adjustment.new_salary,
+        basicSalary: adjustment.newSalary ?? adjustment.proposedSalary ?? adjustment.new_salary,
+        basic_salary: adjustment.newSalary ?? adjustment.proposedSalary ?? adjustment.new_salary,
+      }))
+    : null;
+  const statusUpdates = {
     status: "APPROVED",
     approvedBy: req.user.id,
     approved_by: req.user.id,
     approvedAt: now(),
     approved_at: now(),
-  }));
+  };
+  const result = writeCollectionRecord("salary_adjustments", id, () => statusUpdates) || writeCollectionRecord("salary_increments", id, () => statusUpdates);
+  syncSalaryIncrementStatus(id, statusUpdates);
   createRecord("employee_salary_history", {
     employeeId,
     employee_id: employeeId,
-    salary: adjustment.newSalary ?? adjustment.new_salary,
+    salary: adjustment.newSalary ?? adjustment.proposedSalary ?? adjustment.new_salary,
     effectiveFrom: adjustment.effectiveDate || adjustment.effective_date,
     effective_from: adjustment.effectiveDate || adjustment.effective_date,
     changeType: adjustment.adjustmentType || adjustment.adjustment_type,
@@ -1380,19 +1510,19 @@ function approveSalaryAdjustment(id, payload, req) {
     createdBy: req.user.id,
     created_by: req.user.id,
   }, req.user);
-  audit(req, "Salary Increment Approved", "SalaryAdjustment", id, adjustment, result.record);
+  audit(req, "Salary Increment Approved", "SalaryAdjustment", id, adjustment, result?.record || { ...adjustment, ...statusUpdates });
   if (employeeUpdate?.record) sendHrNotification("SALARY_INCREMENT_APPROVED", employeeUpdate.record, "Salary adjustment approved", "Your salary adjustment has been approved.", { entityType: "salary_adjustment", entityId: id });
-  return { oldValue: adjustment, record: result.record, employee: employeeUpdate?.record };
+  return { oldValue: adjustment, record: normalizeSalaryIncrement({ ...adjustment, ...statusUpdates }), employee: employeeUpdate?.record };
 }
 
 function rejectSalaryAdjustment(id, payload, req) {
   assertHrAccess(req.user, "salary_increments.reject");
-  const adjustment = activeRecords("salary_adjustments", req.user).find((item) => item.id === id);
+  const adjustment = findSalaryAdjustmentRecord(id, req.user);
   if (!adjustment) return null;
   if (normalizeUpperStatus(adjustment.status) !== "PENDING") {
     throw createHttpError(409, "Only pending salary adjustments can be rejected.", "SALARY_ADJUSTMENT_NOT_PENDING");
   }
-  const result = writeCollectionRecord("salary_adjustments", id, () => ({
+  const statusUpdates = {
     status: "REJECTED",
     rejectedBy: req.user.id,
     rejected_by: req.user.id,
@@ -1400,9 +1530,11 @@ function rejectSalaryAdjustment(id, payload, req) {
     rejected_at: now(),
     rejectionReason: payload.reason || payload.rejectionReason || payload.rejection_reason || null,
     rejection_reason: payload.reason || payload.rejectionReason || payload.rejection_reason || null,
-  }));
-  audit(req, "Salary Increment Rejected", "SalaryAdjustment", id, adjustment, result.record);
-  return result;
+  };
+  const result = writeCollectionRecord("salary_adjustments", id, () => statusUpdates) || writeCollectionRecord("salary_increments", id, () => statusUpdates);
+  syncSalaryIncrementStatus(id, statusUpdates);
+  audit(req, "Salary Increment Rejected", "SalaryAdjustment", id, adjustment, result?.record || { ...adjustment, ...statusUpdates });
+  return { oldValue: adjustment, record: normalizeSalaryIncrement({ ...adjustment, ...statusUpdates }) };
 }
 
 function listOnboarding(query, user) {
@@ -1614,7 +1746,7 @@ function buildApprovalQueue(user) {
     }),
     ...activeRecords("leave_requests", user).filter((item) => normalizeUpperStatus(item.status) === "PENDING").map((item) => approvalItem("LEAVE", "leave_request", item, item.createdBy || item.created_by, organizationId)),
     ...activeRecords("promotions", user).filter((item) => normalizeUpperStatus(item.status) === "PENDING").map((item) => approvalItem("PROMOTION", "promotion", item, item.requestedBy || item.requested_by, organizationId)),
-    ...activeRecords("salary_adjustments", user).filter((item) => normalizeUpperStatus(item.status) === "PENDING").map((item) => approvalItem("SALARY_INCREMENT", "salary_adjustment", item, item.requestedBy || item.requested_by, organizationId)),
+    ...uniqueSalaryRecords(user).filter((item) => normalizeUpperStatus(item.status) === "PENDING").map((item) => approvalItem("SALARY_INCREMENT", "salary_adjustment", item, item.requestedBy || item.requested_by, organizationId)),
   ];
   return queue.filter((item) => !item.assignedTo || item.assignedTo === user.id || item.assigned_to === user.id);
 }
@@ -1956,7 +2088,7 @@ function listReturnedRequests(query, user) {
   const records = [
     ...activeRecords("leave_requests", user).map((record) => ({ ...record, requestType: "LEAVE" })),
     ...activeRecords("promotions", user).map((record) => ({ ...record, requestType: "PROMOTION" })),
-    ...activeRecords("salary_adjustments", user).map((record) => ({ ...record, requestType: "SALARY_INCREMENT" })),
+    ...uniqueSalaryRecords(user).map((record) => ({ ...record, requestType: "SALARY_INCREMENT" })),
     ...activeRecords("onboarding_records", user).map((record) => ({ ...record, requestType: "ONBOARDING" })),
     ...activeRecords("employee_confirmations", user).map((record) => ({ ...record, requestType: "CONFIRMATION" })),
     ...activeRecords("employee_documents", user).map((record) => ({ ...record, requestType: "DOCUMENT" })),
@@ -1969,7 +2101,7 @@ function listReports(query, user) {
   const employees = activeRecords("employees", user);
   const onboarding = activeRecords("onboarding_records", user);
   const promotions = activeRecords("promotions", user);
-  const salaryAdjustments = activeRecords("salary_adjustments", user);
+  const salaryAdjustments = uniqueSalaryRecords(user);
   const discipline = activeRecords("disciplinary_cases", user);
   const documents = activeRecords("employee_documents", user);
   const employeeExits = activeRecords("employee_exit_records", user);

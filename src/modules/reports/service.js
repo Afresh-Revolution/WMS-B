@@ -206,6 +206,10 @@ function getHeadcountGrowth(user, query = {}) {
 }
 
 function getAttendance(user, query = {}) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  if (!["superadmin", "hr", "manager"].includes(role)) {
+    throw createHttpError(403, "Attendance monitoring is limited to Super Admin, HR, and managers.", "ATTENDANCE_MONITOR_FORBIDDEN");
+  }
   requireReportPermission(user, REPORT_PERMISSIONS.VIEW_ATTENDANCE);
   const attendance = applyCommonFilters(
     [...repository.listCollection("attendance"), ...repository.listCollection("placement_attendance")],

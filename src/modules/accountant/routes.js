@@ -1,5 +1,6 @@
 const express = require("express");
 const { authenticate } = require("../../auth/middleware");
+const { registerSelfServiceAttendance } = require("../attendance/routes");
 const accountantService = require("./service");
 
 const accountantRouter = express.Router();
@@ -50,6 +51,7 @@ accountantRouter.put("/employment-record", handle((req, res) => send(res, "Accou
 accountantRouter.get("/settings", handle((req, res) => send(res, "Accountant settings loaded.", accountantService.getSettings(req.user))));
 accountantRouter.patch("/settings", handle((req, res) => send(res, "Accountant settings updated.", accountantService.updateSettings(req.body || {}, req))));
 accountantRouter.get("/help-center", handle((req, res) => send(res, "Accountant help center loaded.", accountantService.getHelpCenter(req.user))));
+registerSelfServiceAttendance(accountantRouter, "Accountant");
 
 accountantRouter.get("/payroll", list("payroll", "Accountant payroll records loaded.", "payroll.view"));
 accountantRouter.get("/payroll/dashboard", handle((req, res) => send(res, "Accountant payroll dashboard loaded.", accountantService.getDashboard(req.user, req.query).metrics)));

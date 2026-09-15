@@ -9,6 +9,7 @@ const { billsRouter } = require("../bills/routes");
 const { buildDashboardOverview } = require("../dashboard/dashboardService");
 const { departmentsRouter } = require("../departments/routes");
 const { disciplineRouter, employeeDisciplineRouter } = require("../discipline/routes");
+const { employeesRouter } = require("../employees/routes");
 const { emailConfigRouter } = require("../email/email.routes");
 const { employersRouter } = require("../employers/routes");
 const { eventsRouter } = require("../events/routes");
@@ -22,6 +23,7 @@ const { employeePayrollRouter, payrollRouter, salariesRouter } = require("../pay
 const { purchaseOrdersRouter, purchaseRequestsRouter, receiptsRouter } = require("../procurement/routes");
 const { profileRouter } = require("../profile/routes");
 const { reportsRouter } = require("../reports/routes");
+const { salaryIncrementsRouter } = require("../salaryIncrements/routes");
 const { permissionsRouter, rolesRouter } = require("../roles/routes");
 const { searchRouter } = require("../search/routes");
 const { securityRouter } = require("../security/routes");
@@ -114,7 +116,9 @@ superAdminRouter.use("/meeting-types", meetingTypesRouter);
 superAdminRouter.use("/meeting-rooms", meetingRoomsRouter);
 superAdminRouter.use("/targets", targetsRouter);
 superAdminRouter.use("/payroll", payrollRouter);
+superAdminRouter.use("/salary-increments", salaryIncrementsRouter);
 superAdminRouter.use("/salaries", salariesRouter);
+superAdminRouter.use("/employees", employeesRouter);
 superAdminRouter.use("/employees", employeeDisciplineRouter);
 superAdminRouter.use("/employees", employeePayrollRouter);
 superAdminRouter.use("/purchase-requests", purchaseRequestsRouter);
@@ -162,6 +166,7 @@ for (const moduleDefinition of RESOURCE_MODULES) {
       "reports",
       "roles",
       "permissions",
+      "salary-increments",
       "integrations",
       "email-configurations",
       "notification-configurations",

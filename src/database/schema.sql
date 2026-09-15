@@ -4176,3 +4176,132 @@ create index if not exists idx_hr_promotions_org_status on promotions(organizati
 create index if not exists idx_hr_salary_adjustments_org_status on salary_adjustments(organization_id, status);
 create index if not exists idx_hr_attendance_employee_date on attendance(employee_id, date);
 create index if not exists idx_hr_approval_queue on approval_requests(organization_id, assigned_to, status);
+
+alter table notification_rules add column if not exists push_enabled boolean not null default true;
+alter table notifications add column if not exists destination_url text;
+alter table notifications add column if not exists idempotency_key text;
+alter table notifications add column if not exists metadata jsonb not null default '{}'::jsonb;
+
+create unique index if not exists idx_notifications_idempotency_key
+  on notifications(idempotency_key)
+  where idempotency_key is not null and deleted_at is null;
+
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id),
+  organization_id uuid,
+  endpoint text not null,
+  endpoint_hash text not null,
+  p256dh text not null,
+  auth text not null,
+  expiration_time timestamptz,
+  browser text,
+  device text,
+  user_agent text,
+  last_successful_delivery_at timestamptz,
+  failure_count integer not null default 0,
+  disabled_at timestamptz,
+  disabled_reason text,
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_push_subscriptions_active_endpoint
+  on push_subscriptions(user_id, endpoint_hash)
+  where disabled_at is null and revoked_at is null;
+create index if not exists idx_push_subscriptions_user_active
+  on push_subscriptions(user_id, disabled_at, revoked_at);
+create index if not exists idx_push_subscriptions_org_updated
+  on push_subscriptions(organization_id, updated_at desc);
+
+create table if not exists attendance_locations (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid,
+  branch_id uuid references branches(id),
+  department_id uuid references departments(id),
+  department_ids jsonb not null default '[]'::jsonb,
+  employee_ids jsonb not null default '[]'::jsonb,
+  name text not null,
+  description text,
+  address text,
+  latitude numeric(10,7) not null check (latitude >= -90 and latitude <= 90),
+  longitude numeric(10,7) not null check (longitude >= -180 and longitude <= 180),
+  radius_meters integer not null check (radius_meters > 0 and radius_meters <= 5000),
+  timezone text not null default 'Africa/Lagos',
+  active boolean not null default true,
+  status text not null default 'active',
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists attendance_schedules (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid,
+  branch_id uuid references branches(id),
+  department_id uuid references departments(id),
+  department_ids jsonb not null default '[]'::jsonb,
+  employee_ids jsonb not null default '[]'::jsonb,
+  location_ids jsonb not null default '[]'::jsonb,
+  name text not null,
+  description text,
+  opening_time text not null default '08:00',
+  late_after_time text not null default '09:30',
+  closing_time text not null default '17:00',
+  days_of_week jsonb not null default '[1,2,3,4,5]'::jsonb,
+  timezone text,
+  start_date date,
+  end_date date,
+  active boolean not null default true,
+  status text not null default 'active',
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (opening_time ~ '^[0-2][0-9]:[0-5][0-9]$'),
+  check (late_after_time ~ '^[0-2][0-9]:[0-5][0-9]$'),
+  check (closing_time ~ '^[0-2][0-9]:[0-5][0-9]$')
+);
+
+alter table attendance_schedules alter column opening_time set default '08:00';
+alter table attendance_schedules alter column late_after_time set default '09:30';
+
+alter table attendance add column if not exists user_id uuid references users(id);
+alter table attendance add column if not exists location_id uuid references attendance_locations(id);
+alter table attendance add column if not exists schedule_id uuid references attendance_schedules(id);
+alter table attendance add column if not exists work_date date;
+alter table attendance add column if not exists check_in_at timestamptz;
+alter table attendance add column if not exists latitude numeric(10,7) check (latitude >= -90 and latitude <= 90);
+alter table attendance add column if not exists longitude numeric(10,7) check (longitude >= -180 and longitude <= 180);
+alter table attendance add column if not exists accuracy_meters numeric(10,2);
+alter table attendance add column if not exists calculated_distance_meters numeric(10,2);
+alter table attendance add column if not exists client_location_timestamp timestamptz;
+alter table attendance add column if not exists client_timezone text;
+alter table attendance add column if not exists timezone text;
+alter table attendance add column if not exists attendance_status text;
+alter table attendance add column if not exists risk_flags jsonb not null default '[]'::jsonb;
+alter table attendance add column if not exists device jsonb;
+alter table attendance add column if not exists idempotency_key text;
+
+create index if not exists idx_attendance_locations_org_active
+  on attendance_locations(organization_id, active, status);
+create index if not exists idx_attendance_locations_department
+  on attendance_locations(department_id, active);
+create index if not exists idx_attendance_schedules_org_active
+  on attendance_schedules(organization_id, active, status);
+create index if not exists idx_attendance_schedules_department
+  on attendance_schedules(department_id, active);
+create unique index if not exists idx_attendance_checkin_unique_schedule_work_date
+  on attendance(employee_id, schedule_id, work_date)
+  where schedule_id is not null and work_date is not null and check_in_at is not null and deleted_at is null;
+create unique index if not exists idx_attendance_checkin_idempotency
+  on attendance(idempotency_key)
+  where idempotency_key is not null and deleted_at is null;
+create index if not exists idx_attendance_org_work_date
+  on attendance(organization_id, work_date desc);
+create index if not exists idx_attendance_location_work_date
+  on attendance(location_id, work_date desc);

@@ -35,12 +35,21 @@ async function bootstrapSuperadmin(baseUrl) {
   return response.json();
 }
 
+function isoDate(offsetDays = 0) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 test("creates assigned targets, calculates progress, auto-completes, and reports performance", async (t) => {
   const app = createTestApp(t);
   const server = app.listen(0);
   t.after(() => server.close());
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const startDate = isoDate(-1);
+  const endDate = isoDate(30);
+  const milestoneDueDate = isoDate(15);
   const auth = await bootstrapSuperadmin(baseUrl);
   const adminHeaders = {
     "content-type": "application/json",
@@ -98,7 +107,7 @@ test("creates assigned targets, calculates progress, auto-completes, and reports
     headers: adminHeaders,
     body: JSON.stringify({
       title: "Increase monthly sales",
-      description: "Reach the August sales target",
+      description: "Reach the current sales target",
       targetType: "DEPARTMENT",
       measurementType: "CURRENCY",
       metricName: "Monthly sales",
@@ -106,8 +115,8 @@ test("creates assigned targets, calculates progress, auto-completes, and reports
       currentValue: 6500000,
       progress: 100,
       unit: "NGN",
-      startDate: "2026-08-01",
-      endDate: "2026-08-31",
+      startDate,
+      endDate,
       priority: "HIGH",
       departmentId: department.data.id,
       employeeIds: [employee.data.id],
@@ -147,7 +156,7 @@ test("creates assigned targets, calculates progress, auto-completes, and reports
     body: JSON.stringify({
       title: "Reach NGN 7.5m",
       targetValue: 7500000,
-      dueDate: "2026-08-20",
+      dueDate: milestoneDueDate,
     }),
   });
   assert.equal(milestoneResponse.status, 201);

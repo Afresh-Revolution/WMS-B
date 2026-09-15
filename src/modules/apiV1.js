@@ -5,12 +5,15 @@ const { ROLE_DEFINITIONS, PERMISSIONS } = require("../constants/rbac");
 const { RESOURCE_MODULES } = require("./_shared/moduleCatalog");
 const { createResourceRouter } = require("./_shared/resourceRouter");
 const { announcementsRouter } = require("./announcements/routes");
+const { attendanceRouter } = require("./attendance/routes");
 const { authRouter } = require("./auth/routes");
 const { auditLogsRouter } = require("./auditLogs/routes");
 const { billsRouter } = require("./bills/routes");
 const { dashboardRouter } = require("./dashboard/routes");
 const { departmentsRouter } = require("./departments/routes");
 const { disciplineRouter, employeeDisciplineRouter } = require("./discipline/routes");
+const { employeeRouter } = require("./employee/routes");
+const { employeesRouter } = require("./employees/routes");
 const { employersRouter } = require("./employers/routes");
 const { eventsRouter } = require("./events/routes");
 const { expensePoliciesRouter, expensesRouter } = require("./expenses/routes");
@@ -23,11 +26,14 @@ const { nyscInternRouter } = require("./nyscIntern/routes");
 const { employeePayrollRouter, payrollRouter, salariesRouter } = require("./payroll/routes");
 const { purchaseOrdersRouter, purchaseRequestsRouter, receiptsRouter } = require("./procurement/routes");
 const { reportsRouter } = require("./reports/routes");
+const { salaryIncrementsRouter } = require("./salaryIncrements/routes");
 const { permissionsRouter, rolesRouter } = require("./roles/routes");
 const { searchRouter } = require("./search/routes");
 const { profileRouter } = require("./profile/routes");
 const { superAdminRouter } = require("./superAdmin/routes");
 const { hrRouter } = require("./hr/routes");
+const { hodRouter } = require("./hod/routes");
+const { internRouter } = require("./intern/routes");
 const { managerRouter } = require("./manager/routes");
 const { secretaryRouter } = require("./secretary/routes");
 const { accountantRouter } = require("./accountant/routes");
@@ -46,9 +52,15 @@ function createApiV1Router() {
   router.use("/profile", profileRouter);
   router.use("/super-admin", superAdminRouter);
   router.use("/hr", hrRouter);
+  router.use("/hod", hodRouter);
   router.use("/manager", managerRouter);
   router.use("/secretary", secretaryRouter);
   router.use("/accountant", accountantRouter);
+  router.use("/employee", employeeRouter);
+  router.use("/employer", employeeRouter);
+  router.use("/intern", internRouter);
+  router.use("/nysc", internRouter);
+  router.use("/nysc-intern", internRouter);
   router.use("/dashboard", dashboardRouter);
   router.use("/security", securityRouter);
   router.use("/integrations", integrationsRouter);
@@ -75,6 +87,7 @@ function createApiV1Router() {
   router.use("/targets", targetsRouter);
   router.use("/payroll", payrollRouter);
   router.use("/salaries", salariesRouter);
+  router.use("/employees", employeesRouter);
   router.use("/employees", employeeDisciplineRouter);
   router.use("/employees", employeePayrollRouter);
   router.use("/purchase-requests", purchaseRequestsRouter);
@@ -87,7 +100,9 @@ function createApiV1Router() {
   router.use("/discipline", disciplineRouter);
   router.use("/nysc-interns", nyscInternRouter);
   router.use("/announcements", announcementsRouter);
+  router.use("/attendance", attendanceRouter);
   router.use("/reports", reportsRouter);
+  router.use("/salary-increments", salaryIncrementsRouter);
   router.use("/audit-logs", auditLogsRouter);
   router.use("/roles", rolesRouter);
   router.use("/permissions", permissionsRouter);
@@ -142,6 +157,7 @@ function createApiV1Router() {
         "reports",
         "roles",
         "permissions",
+        "salary-increments",
         "vendors",
         "system-settings",
         "email-configurations",

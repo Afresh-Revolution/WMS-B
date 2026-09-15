@@ -88,6 +88,14 @@ function parseJsonArray(value) {
   }
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function nullableUuid(value) {
+  return isUuid(value) ? value : null;
+}
+
 function mapUser(row) {
   if (!row) {
     return null;
@@ -188,6 +196,70 @@ async function createSuperadmin({ name, email, passwordHash }) {
   return mapUser(result.rows[0]);
 }
 
+async function createUser({
+  name,
+  fullName,
+  email,
+  phone,
+  passwordHash,
+  role = "employee",
+  roleId,
+  permissions = [],
+  status = "active",
+  accountType,
+  departmentId,
+  employeeId,
+  createdBy,
+  mustChangePassword = false,
+  activationTokenHash,
+  activationTokenExpiresAt,
+}) {
+  await ensureSchema();
+  const normalizedEmail = normalizeEmail(email);
+  const existing = await query(
+    `select id from users where lower(email) = $1 and deleted_at is null limit 1`,
+    [normalizedEmail]
+  );
+
+  if (existing.rows[0]) {
+    const error = new Error("A user with this email already exists.");
+    error.statusCode = 409;
+    error.publicMessage = error.message;
+    throw error;
+  }
+
+  const result = await query(
+    `insert into users
+      (full_name, email, phone, password_hash, role, role_id, department_id, employee_id,
+       account_type, status, permissions, email_verified, phone_verified,
+       must_change_password, force_password_reset, failed_login_count,
+       failed_login_attempts, password_changed_at, created_by,
+       activation_token_hash, activation_token_expires_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8,
+       $9, $10, $11::jsonb, false, false,
+       $12, $12, 0, 0, now(), $13, $14, $15)
+     returning *`,
+    [
+      String(fullName || name || "").trim(),
+      normalizedEmail,
+      phone || null,
+      passwordHash,
+      role,
+      nullableUuid(roleId),
+      nullableUuid(departmentId),
+      nullableUuid(employeeId),
+      accountType || (role === "superadmin" ? "SUPER_ADMIN" : role === "admin" ? "ADMIN" : "STAFF"),
+      status,
+      JSON.stringify(Array.isArray(permissions) ? permissions : []),
+      Boolean(mustChangePassword),
+      nullableUuid(createdBy),
+      activationTokenHash || null,
+      activationTokenExpiresAt || null,
+    ]
+  );
+  return mapUser(result.rows[0]);
+}
+
 async function updateUser(id, payload = {}) {
   await ensureSchema();
   const fields = [];
@@ -242,6 +314,7 @@ async function updateUserPassword(id, passwordHash) {
 }
 
 module.exports = {
+  createUser,
   createSuperadmin,
   ensureSchema,
   getUserByEmail,

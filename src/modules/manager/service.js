@@ -27,6 +27,20 @@ const MANAGER_NAVIGATION = Object.freeze([
   "Sign Out",
 ]);
 
+const HOD_NAVIGATION = Object.freeze([
+  "Dashboard",
+  "Team Members",
+  "Department Tasks",
+  "Targets & KPIs",
+  "Department Meeting",
+  "Reports",
+  "Notifications",
+  "Settings",
+  "Sign Out",
+]);
+
+const DEPARTMENT_LEAD_ROLES = new Set(["manager", "hod"]);
+
 const SEARCH_FIELDS = Object.freeze({
   employees: ["fullName", "name", "employeeId", "employee_id", "email", "phone", "status"],
   departments: ["name", "code", "description", "status"],
@@ -94,6 +108,10 @@ function createHttpError(statusCode, message, code, details = {}) {
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
+}
+
+function accessLabel(user) {
+  return normalizeRole(user?.role) === "hod" ? "HOD" : "Manager";
 }
 
 function normalizeStatus(value, fallback = "PENDING") {
@@ -243,7 +261,7 @@ function organizationMatches(record, scope) {
 }
 
 function buildScope(user) {
-  if (normalizeRole(user?.role) !== "manager") {
+  if (!DEPARTMENT_LEAD_ROLES.has(normalizeRole(user?.role))) {
     throw createHttpError(403, "Manager access is required.", "MANAGER_ROLE_REQUIRED");
   }
 
@@ -567,10 +585,11 @@ function createScopedRecord(collection, payload, req, options = {}) {
 }
 
 function audit(req, action, module, recordId, oldValue, newValue, scope) {
+  const label = accessLabel(req.user);
   return recordOperationalAudit({
     user: req.user,
     action,
-    module: `Manager ${module}`,
+    module: `${label} ${module}`,
     recordId,
     targetType: module,
     oldValue,
@@ -579,7 +598,7 @@ function audit(req, action, module, recordId, oldValue, newValue, scope) {
     userAgent: req.get("user-agent"),
     requestId: req.id,
     metadata: {
-      role: "manager",
+      role: req.user?.role || "manager",
       organizationId: scope.organizationId,
       departmentIds: [...scope.departmentIds],
       managerEmployeeId: scope.managerEmployeeId,
@@ -640,6 +659,110 @@ function getDashboard(user, query = {}) {
     meta: {
       period: query.period || "current",
       access: "department_team_scoped",
+    },
+  };
+}
+
+function dateValue(record, keys) {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value) {
+      const timestamp = new Date(value).getTime();
+      if (!Number.isNaN(timestamp)) return timestamp;
+    }
+  }
+  return 0;
+}
+
+function newestFirst(records, keys = ["updatedAt", "updated_at", "createdAt", "created_at"]) {
+  return [...records].sort((left, right) => dateValue(right, keys) - dateValue(left, keys));
+}
+
+function statusCounts(records, fallback = "PENDING") {
+  return records.reduce((counts, record) => {
+    const key = normalizeStatus(record.status, fallback).toLowerCase();
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function percentValue(record) {
+  const explicitProgress = record.progress ?? record.progressPercent ?? record.progress_percent;
+  if (explicitProgress !== undefined && explicitProgress !== null && explicitProgress !== "") {
+    return Math.max(0, Math.min(100, Math.round(toNumber(explicitProgress))));
+  }
+
+  const current = toNumber(record.currentValue ?? record.current_value ?? record.actualValue ?? record.actual_value);
+  const target = toNumber(record.targetValue ?? record.target_value ?? record.value);
+  return target > 0 ? Math.max(0, Math.min(100, Math.round((current / target) * 100))) : 0;
+}
+
+function getPrimaryDepartment(scope) {
+  const department = scope.departments[0] || findDepartmentRecord([...scope.departmentIds][0]);
+  if (!department) return null;
+  const employees = scope.employees.filter((employee) => (employee.departmentId || employee.department_id) === department.id);
+
+  return {
+    id: department.id,
+    name: department.name || department.departmentName || department.department_name || null,
+    code: department.code || department.departmentCode || department.department_code || null,
+    description: department.description || null,
+    status: department.status || "active",
+    organizationId: department.organizationId || department.organization_id || scope.organizationId || null,
+    organization_id: department.organization_id || department.organizationId || scope.organizationId || null,
+    hod: employeeSummary(scope.managerEmployee),
+    headcount: employees.length,
+    activeMembers: employees.filter((employee) => statusKey(employee.status || employee.employmentStatus || employee.employment_status, "active") === "active").length,
+  };
+}
+
+function getHodWorkspace(user, query = {}) {
+  const scope = buildScope(user);
+  const dashboard = getDashboard(user, query);
+  const limit = Math.max(1, Math.min(25, Number(query.previewLimit || query.limit || 6) || 6));
+  const tasks = activeRecords("tasks").filter((record) => recordInScope(record, scope, { collection: "tasks", allowCreatedBy: true }));
+  const targets = activeRecords("targets").filter((record) => recordInScope(record, scope, { collection: "targets", allowCreatedBy: true }));
+  const meetings = activeRecords("meetings").filter((record) => recordInScope(record, scope, { collection: "meetings", allowCreatedBy: true }));
+  const leaveRequests = activeRecords("leave_requests").filter((record) => recordInScope(record, scope, { collection: "leave_requests" }));
+
+  return {
+    scope: dashboard.scope,
+    department: getPrimaryDepartment(scope),
+    metrics: dashboard.metrics,
+    teamMembers: {
+      total: scope.employees.length,
+      active: scope.employees.filter((employee) => statusKey(employee.status || employee.employmentStatus || employee.employment_status, "active") === "active").length,
+      onLeave: activeLeaveCount(leaveRequests),
+      items: scope.employees.slice(0, limit).map(employeeSummary),
+      tabs: [
+        { key: "all", label: "All", count: scope.employees.length },
+        { key: "active", label: "Active", count: scope.employees.filter((employee) => statusKey(employee.status || employee.employmentStatus || employee.employment_status, "active") === "active").length },
+        { key: "inactive", label: "Inactive", count: scope.employees.filter((employee) => statusKey(employee.status || employee.employmentStatus || employee.employment_status, "active") !== "active").length },
+        { key: "on_leave", label: "On Leave", count: activeLeaveCount(leaveRequests) },
+      ],
+    },
+    tasks: {
+      total: tasks.length,
+      counts: statusCounts(tasks),
+      items: newestFirst(tasks).slice(0, limit),
+    },
+    targets: {
+      total: targets.length,
+      averageProgress: targetProgress(targets),
+      counts: statusCounts(targets, "ACTIVE"),
+      items: newestFirst(targets).slice(0, limit).map((target) => ({ ...target, progress: percentValue(target) })),
+    },
+    meetings: {
+      total: meetings.length,
+      upcoming: meetings.filter((meeting) => dateValue(meeting, ["startAt", "start_at", "scheduledAt", "scheduled_at", "date"]) >= Date.now()).length,
+      counts: statusCounts(meetings, "SCHEDULED"),
+      items: newestFirst(meetings, ["startAt", "start_at", "scheduledAt", "scheduled_at", "date", "createdAt", "created_at"]).slice(0, limit),
+    },
+    approvals: dashboard.approvals,
+    navigation: HOD_NAVIGATION,
+    meta: {
+      period: query.period || "current",
+      access: "hod_department_scoped",
     },
   };
 }
@@ -1274,6 +1397,7 @@ module.exports = {
   getDepartment,
   getEmployee,
   getHelpCenter,
+  getHodWorkspace,
   getManagerProfile,
   getManagerSettings,
   getScopeSummary,

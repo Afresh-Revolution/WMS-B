@@ -1,8 +1,9 @@
 const crypto = require("crypto");
 const { hashPassword } = require("../../auth/passwords");
 const { revokeSession, revokeUserSessions, listSessions } = require("../../auth/sessionStore");
+const postgresUserStore = require("../../auth/postgresUserStore");
 const {
-  createUser,
+  createUser: createLocalUser,
   getUserByEmail,
   getUserById,
   listUsers,
@@ -31,6 +32,10 @@ function createHttpError(statusCode, message, code, details = {}) {
   error.code = code;
   error.details = details;
   return error;
+}
+
+function createAuthUser(payload) {
+  return postgresUserStore.isEnabled() ? postgresUserStore.createUser(payload) : createLocalUser(payload);
 }
 
 function normalizeEmail(email) {
@@ -322,7 +327,7 @@ function validateCreateUserPayload(payload) {
   return { fullName, email, employee, role, department };
 }
 
-function createUserAccount(payload, actor, req) {
+async function createUserAccount(payload, actor, req) {
   const { fullName, email, employee, role, department } = validateCreateUserPayload(payload || {});
   ensureCanCreateRole(actor, role);
 
@@ -333,7 +338,7 @@ function createUserAccount(payload, actor, req) {
   securityService.validatePasswordAgainstPolicy(temporaryPassword);
 
   const activationToken = generateActivationToken();
-  const user = createUser({
+  const user = await createAuthUser({
     name: fullName,
     fullName,
     email,
@@ -341,7 +346,7 @@ function createUserAccount(payload, actor, req) {
     passwordHash: hashPassword(temporaryPassword),
     role: role.key,
     roleId: role.id,
-    permissions: Array.isArray(payload.permissions) ? payload.permissions : [],
+    permissions: Array.isArray(payload.permissions) && payload.permissions.length > 0 ? payload.permissions : role.permissions,
     status: payload.status ? normalizeStatus(payload.status) : "pending",
     accountType: normalizeAccountType(payload.accountType, role.key),
     departmentId: department?.id || null,

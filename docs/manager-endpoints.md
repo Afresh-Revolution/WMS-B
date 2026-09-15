@@ -79,6 +79,21 @@ List endpoints support pagination and filtering through query parameters such as
 | GET | `/api/v1/manager/attendance/:id` | Get one scoped team attendance record |
 | PATCH | `/api/v1/manager/attendance/:id/correct` | Correct a scoped attendance record with audit logging |
 
+Managers with `attendance.manage` can also use the shared attendance management API for records in their assigned scope:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/attendance/locations` | List scoped approved check-in locations |
+| POST | `/api/v1/attendance/locations` | Create a scoped approved check-in location |
+| PATCH | `/api/v1/attendance/locations/:id` | Update a scoped approved check-in location |
+| POST | `/api/v1/attendance/locations/:id/enable` | Enable a scoped location |
+| POST | `/api/v1/attendance/locations/:id/disable` | Disable a scoped location |
+| GET | `/api/v1/attendance/schedules` | List scoped attendance schedules |
+| POST | `/api/v1/attendance/schedules` | Create a scoped attendance schedule |
+| PATCH | `/api/v1/attendance/schedules/:id` | Update a scoped attendance schedule |
+| GET | `/api/v1/attendance/records` | List scoped check-in records |
+| GET | `/api/v1/attendance/reports/summary` | Return scoped attendance status counts |
+
 ## Performance
 
 | Method | Endpoint | Purpose |

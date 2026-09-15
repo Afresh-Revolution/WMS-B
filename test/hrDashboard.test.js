@@ -171,7 +171,6 @@ test("HR dashboard uses shared people data and exposes HR workflows", async (t) 
     "payroll.view",
     "payroll.create",
     "payroll.approve",
-    "attendance.view",
     "attendance.manage",
     "attendance.correct",
     "performance.view",
@@ -192,6 +191,7 @@ test("HR dashboard uses shared people data and exposes HR workflows", async (t) 
     "employee_exits.create",
     "nysc_intern.view",
     "nysc_intern.create",
+    "attendance.view",
     "hr_settings.view",
     "help_center.view",
   ]) {
@@ -484,14 +484,14 @@ test("HR dashboard uses shared people data and exposes HR workflows", async (t) 
   assert.ok(Array.isArray(profile.data.documents));
   assert.ok(Array.isArray(profile.data.leaveHistory));
   assert.deepEqual(profile.data.performanceSummary, []);
-  assert.equal(profile.data.attendanceSummary, null);
+  assert.equal(profile.data.attendanceSummary.todayTotal >= 0, true);
 
   const reportsResponse = await fetch(`${baseUrl}/api/hr/reports`, { headers });
   assert.equal(reportsResponse.status, 200);
   const reports = await reportsResponse.json();
   assert.equal(reports.data.salaryIncrements.approved >= 1, true);
   assert.equal(reports.data.documents.total >= 3, true);
-  assert.equal(reports.data.attendance, null);
+  assert.equal(reports.data.attendance.todayTotal >= 0, true);
 
   const hrAuditResponse = await fetch(`${baseUrl}/api/hr/audit-logs`, { headers });
   assert.equal(hrAuditResponse.status, 200);

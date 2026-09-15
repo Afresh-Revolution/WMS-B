@@ -22,21 +22,31 @@ function getRequestContext(req) {
   };
 }
 
-function createSession({ user, refreshToken, req }) {
+function getRememberMeTtlMinutes() {
+  const configuredDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS);
+  const days = Number.isFinite(configuredDays) && configuredDays > 0 ? configuredDays : 30;
+  return days * 24 * 60;
+}
+
+function createSession({ user, refreshToken, req, rememberMe = false }) {
   const { getActiveSecuritySettings } = require("../modules/security/securityService");
   const securitySettings = getActiveSecuritySettings();
+  const keepSignedIn = Boolean(rememberMe && securitySettings.allowRememberDevice);
+  const ttlMinutes = keepSignedIn ? getRememberMeTtlMinutes() : securitySettings.sessionTimeoutMinutes;
   const timestamp = now();
   const session = {
     id: crypto.randomUUID(),
     userId: user.id,
     refreshTokenHash: hashToken(refreshToken),
     status: "active",
+    rememberMe: keepSignedIn,
+    remember_me: keepSignedIn,
     ...getRequestContext(req),
     createdAt: timestamp,
     updatedAt: timestamp,
     lastSeenAt: timestamp,
     lastUsedAt: timestamp,
-    expiresAt: new Date(Date.now() + 1000 * 60 * securitySettings.sessionTimeoutMinutes).toISOString(),
+    expiresAt: new Date(Date.now() + 1000 * 60 * ttlMinutes).toISOString(),
     revokedAt: null,
     revokedBy: null,
     revokeReason: null,

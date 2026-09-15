@@ -17,7 +17,6 @@ const {
   getUserByEmail,
   getUserById,
   hasSuperadmin,
-  sanitizeUser,
   updateUser,
   updateUserPassword,
 } = require("../../auth/userStore");
@@ -27,6 +26,7 @@ const securityService = require("../security/securityService");
 const emailService = require("../email/email.service");
 const { decorateUser } = require("../users/userAccessService");
 const technicalAuditRepository = require("../technicalAudit/repository");
+const { getWorkspaceForRole } = require("./workspace");
 
 const authRouter = express.Router();
 const DEFAULT_MAX_FAILED_ATTEMPTS = 5;
@@ -108,17 +108,41 @@ function safeSession(session) {
   return safe;
 }
 
-function issueAuthResponse(user, req) {
+function parseBooleanFlag(value) {
+  return value === true || value === 1 || value === "1" || String(value || "").toLowerCase() === "true";
+}
+
+function wantsKeepMeSignedIn(body = {}) {
+  return parseBooleanFlag(body.keepMeSignedIn ?? body.keep_me_signed_in ?? body.rememberMe ?? body.remember_me);
+}
+
+function isSsoEnabled() {
+  return ["1", "true", "yes", "on"].includes(String(process.env.SSO_ENABLED || "").toLowerCase());
+}
+
+function issueAuthResponse(user, req, options = {}) {
+  const rememberMe = Boolean(options.rememberMe);
   const refreshToken = issueRefreshToken();
-  const session = createSession({ user, refreshToken, req });
+  const session = createSession({ user, refreshToken, req, rememberMe });
   securityService.enforceSessionPolicy(user.id, session.id, req);
-  return {
+  const decoratedUser = decorateUser(user);
+  const workspace = getWorkspaceForRole(user.role || decoratedUser.roleKey);
+  const payload = {
     token: issueAccessToken(user, session.id),
     accessToken: issueAccessToken(user, session.id),
     refreshToken,
-    user: decorateUser(user),
+    user: decoratedUser,
     session: safeSession(session),
+    workspace,
+    keepMeSignedIn: Boolean(session.rememberMe),
     mustChangePassword: Boolean(user.mustChangePassword || user.forcePasswordReset),
+  };
+  return {
+    success: true,
+    message: "Signed in.",
+    data: payload,
+    meta: {},
+    ...payload,
   };
 }
 
@@ -199,6 +223,29 @@ authRouter.post("/bootstrap", async (req, res) => {
   return res.status(201).json(auth);
 });
 
+authRouter.get("/login-options", (_req, res) => {
+  const settings = securityService.getActiveSecuritySettings();
+  const ssoEnabled = isSsoEnabled();
+  return res.json({
+    success: true,
+    message: "Login options loaded.",
+    data: {
+      loginEndpoint: "/api/v1/auth/login",
+      forgotPasswordEndpoint: "/api/v1/auth/forgot-password",
+      refreshEndpoint: "/api/v1/auth/refresh",
+      passwordLogin: true,
+      keepMeSignedInEnabled: Boolean(settings.allowRememberDevice),
+      ssoEnabled,
+      ssoEndpoint: ssoEnabled ? "/api/v1/auth/sso/start" : null,
+    },
+    meta: {},
+  });
+});
+
+authRouter.post("/sso/start", (_req, res) => {
+  throw createHttpError(501, "SSO is not configured for this workspace.", "SSO_NOT_CONFIGURED");
+});
+
 authRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (typeof email !== "string" || typeof password !== "string") {
@@ -262,16 +309,17 @@ authRouter.post("/login", async (req, res) => {
   securityService.recordLoginAttempt({ userId: user.id, email: normalizedEmail, req, successful: true });
   recordLoginHistory({ userId: user.id, status: "success", req, reason: "password" });
   recordAuthAudit({ user: updatedUser, req, action: "LOGIN_SUCCESS", description: "User logged in." });
+  const rememberMe = wantsKeepMeSignedIn(req.body);
   if (securityService.isMfaRequiredForUser(updatedUser)) {
     const challenge = securityService.createMfaChallenge(updatedUser, req, req.body?.mfaMethod || "email");
     return res.status(202).json({
       success: true,
       message: "MFA verification required.",
-      data: { mfaRequired: true, challenge },
+      data: { mfaRequired: true, challenge, keepMeSignedIn: rememberMe, workspace: getWorkspaceForRole(updatedUser.role) },
       meta: {},
     });
   }
-  return res.json(issueAuthResponse(updatedUser, req));
+  return res.json(issueAuthResponse(updatedUser, req, { rememberMe }));
 });
 
 authRouter.post("/mfa/verify", async (req, res) => {
@@ -284,7 +332,7 @@ authRouter.post("/mfa/verify", async (req, res) => {
     lastActivityAt: now(),
   });
   recordLoginHistory({ userId: user.id, status: "success", req, reason: "mfa" });
-  return res.json(issueAuthResponse(updatedUser, req));
+  return res.json(issueAuthResponse(updatedUser, req, { rememberMe: wantsKeepMeSignedIn(req.body) }));
 });
 
 authRouter.post("/refresh", async (req, res) => {
@@ -304,7 +352,7 @@ authRouter.post("/refresh", async (req, res) => {
   }
 
   revokeSession(session.id, user.id);
-  return res.json(issueAuthResponse(user, req));
+  return res.json(issueAuthResponse(user, req, { rememberMe: Boolean(session.rememberMe || session.remember_me) }));
 });
 
 authRouter.post("/logout", authenticate, (req, res) => {
@@ -317,7 +365,16 @@ authRouter.post("/logout", authenticate, (req, res) => {
 });
 
 authRouter.get("/me", authenticate, async (req, res) => {
-  return res.json({ success: true, message: "Current user loaded.", data: decorateUser(await authGetUserById(req.user.id)), meta: {} });
+  const user = decorateUser(await authGetUserById(req.user.id));
+  return res.json({
+    success: true,
+    message: "Current user loaded.",
+    data: {
+      ...user,
+      workspace: getWorkspaceForRole(user.roleKey || user.role),
+    },
+    meta: {},
+  });
 });
 
 authRouter.post("/change-password", authenticate, async (req, res) => {
@@ -339,9 +396,9 @@ authRouter.post("/change-password", authenticate, async (req, res) => {
   return res.json({ success: true, message: "Password changed.", data: decorateUser(await authGetUserById(user.id)), meta: {} });
 });
 
-authRouter.post("/forgot-password", (req, res) => {
+authRouter.post("/forgot-password", async (req, res) => {
   const email = normalizeEmail(req.body?.email);
-  const user = email ? getUserByEmail(email) : null;
+  const user = email ? await authGetUserByEmail(email) : null;
   if (user) {
     const token = crypto.randomBytes(32).toString("base64url");
     appendRecord("password_reset_tokens", {
@@ -391,7 +448,7 @@ authRouter.post("/forgot-password", (req, res) => {
   });
 });
 
-authRouter.post("/reset-password", (req, res) => {
+authRouter.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body || {};
   if (typeof token !== "string" || typeof newPassword !== "string" || newPassword.length < 8) {
     throw createHttpError(400, "A valid token and new password are required.", "VALIDATION_ERROR");
@@ -411,16 +468,16 @@ authRouter.post("/reset-password", (req, res) => {
   }
 
   const userId = tokens[index].userId || tokens[index].user_id;
-  const existingUser = getUserById(userId);
+  const existingUser = await authGetUserById(userId);
   securityService.validatePasswordAgainstPolicy(newPassword, userId);
   securityService.recordPasswordHistory(existingUser);
-  const updated = updateUserPassword(userId, hashPassword(newPassword));
-  updateUser(userId, { status: "active", mustChangePassword: false, forcePasswordReset: false });
+  const updated = await authUpdateUserPassword(userId, hashPassword(newPassword));
+  await authUpdateUser(userId, { status: "active", mustChangePassword: false, forcePasswordReset: false });
   tokens[index] = { ...tokens[index], usedAt: now(), used_at: now(), updatedAt: now(), updated_at: now() };
   writeCollection("password_reset_tokens", tokens);
   revokeUserSessions(userId, userId);
   recordAuthAudit({ user: updated, req, action: "PASSWORD_RESET", description: "User reset password." });
-  return res.json({ success: true, message: "Password reset.", data: decorateUser(getUserById(userId)), meta: {} });
+  return res.json({ success: true, message: "Password reset.", data: decorateUser(await authGetUserById(userId)), meta: {} });
 });
 
 authRouter.get("/sessions", authenticate, (req, res) => {
