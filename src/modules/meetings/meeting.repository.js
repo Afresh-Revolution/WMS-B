@@ -419,4 +419,6 @@ module.exports = {
   removeMeetingType,
   updateMinutes,
   updateParticipant,
+  ensureDefaultMeetingTypes,
+  findMeetingTypeByCode,
 };

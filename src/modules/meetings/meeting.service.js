@@ -78,15 +78,60 @@ function validateMeetingTypeRequirements(meetingType, payload) {
 }
 
 function getMeetingTypeOrThrow(id) {
-  const meetingType = repository.findMeetingType(id);
+  return resolveMeetingType({ meetingTypeId: id });
+}
+
+function isPlaceholderMeetingType(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return !normalized || ["select", "select a type", "none", "n/a", "null", "undefined"].includes(normalized);
+}
+
+function resolveMeetingType(payload = {}) {
+  repository.ensureDefaultMeetingTypes();
+  const requested =
+    payload.meetingTypeId ||
+    payload.meeting_type_id ||
+    payload.meetingType ||
+    payload.meeting_type ||
+    payload.type;
+  const wantsVirtual = Boolean(
+    payload.virtualLink ||
+      payload.virtual_link ||
+      payload.meetingLink ||
+      payload.meeting_link ||
+      String(payload.type || "").toLowerCase() === "virtual"
+  );
+
+  if (requested && !isPlaceholderMeetingType(requested)) {
+    const byId = repository.findMeetingType(requested);
+    if (byId) {
+      return assertActiveMeetingType(byId);
+    }
+    const byCode = repository.findMeetingTypeByCode(requested);
+    if (byCode) {
+      return assertActiveMeetingType(byCode);
+    }
+    const byName = repository.ensureDefaultMeetingTypes().find(
+      (type) => String(type.name || "").trim().toLowerCase() === String(requested).trim().toLowerCase()
+    );
+    if (byName) {
+      return assertActiveMeetingType(byName);
+    }
+  }
+
+  const fallback = repository.findMeetingTypeByCode(wantsVirtual ? "VIRTUAL" : "IN_PERSON") || repository.ensureDefaultMeetingTypes()[0];
+  return assertActiveMeetingType(fallback);
+}
+
+function assertActiveMeetingType(meetingType) {
   if (!meetingType) {
     throw createHttpError(404, "Meeting type was not found.", "MEETING_TYPE_NOT_FOUND");
   }
-
   if (String(meetingType.status || "active").toLowerCase() !== "active") {
     throw createHttpError(400, "Meeting type is not active.", "MEETING_TYPE_INACTIVE");
   }
-
   return meetingType;
 }
 
@@ -319,7 +364,7 @@ async function createMeeting(payload, user, req) {
   assertPermission(user, MEETING_PERMISSIONS.CREATE);
   assertTitle(payload.title);
 
-  const meetingType = getMeetingTypeOrThrow(payload.meetingTypeId || payload.meeting_type_id);
+  const meetingType = resolveMeetingType(payload);
   const virtualProvider = getVirtualProvider(payload, meetingType);
   validateMeetingTypeRequirements(meetingType, {
     ...payload,

@@ -1,7 +1,9 @@
 const crypto = require("crypto");
+const { listUsers } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { applyBasicFilters, paginate, sortRecords } = require("../../utils/query");
 const { ensureDefaultDepartments } = require("../lookups/catalog");
+const { listHodOptions } = require("../employers/staffDirectoryService");
 
 const ACTIVE_STATUSES = new Set(["active", "probation", "on leave"]);
 const INACTIVE_HOD_STATUSES = new Set(["inactive", "suspended", "terminated", "resigned", "retired"]);
@@ -42,19 +44,44 @@ function findEmployee(idOrName) {
   }
 
   const requested = String(idOrName).trim().toLowerCase();
-  return (
-    readActive("employees").find((employee) => {
+  const collections = ["employees", "interns", "nysc_members", "staff_members"];
+  for (const collection of collections) {
+    const record = readActive(collection).find((employee) => {
       const name = String(getEmployeeName(employee) || "").trim().toLowerCase();
       return (
         employee.id === idOrName ||
+        employee.userId === idOrName ||
         employee.employeeId === idOrName ||
         employee.employee_id === idOrName ||
         String(employee.email || "").toLowerCase() === requested ||
-        name === requested ||
-        (requested.length >= 3 && name.includes(requested))
+        name === requested
       );
-    }) || null
-  );
+    });
+    if (record) {
+      return record;
+    }
+  }
+
+  const user = listUsers().find((candidate) => {
+    const name = String(candidate.fullName || candidate.name || "").trim().toLowerCase();
+    return (
+      candidate.id === idOrName ||
+      String(candidate.email || "").toLowerCase() === requested ||
+      name === requested
+    );
+  });
+  if (!user || user.status === "deleted") {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    userId: user.id,
+    fullName: user.fullName || user.name,
+    name: user.name,
+    email: user.email,
+    status: user.status || "active",
+  };
 }
 
 function getEmployeeName(employee) {
@@ -412,6 +439,7 @@ function listDepartments(query = {}) {
           },
         ],
       },
+      hods: listHodOptions(),
     },
   };
 }
@@ -465,17 +493,16 @@ function resolveHodReference(value, label = "HOD") {
   }
 
   const employee = findEmployee(value);
-  if (employee) {
-    ensureActiveEmployee(employee.id, label);
-    return { hodId: employee.id, hodName: getEmployeeName(employee) };
+  if (!employee) {
+    const error = new Error("HOD must be an existing user on the system.");
+    error.statusCode = 400;
+    error.publicMessage = error.message;
+    error.code = "HOD_NOT_FOUND";
+    throw error;
   }
 
-  const looksLikeId = /^[0-9a-f-]{8,}$/i.test(String(value).trim());
-  if (looksLikeId) {
-    ensureActiveEmployee(value, label);
-  }
-
-  return { hodId: null, hodName: String(value).trim() };
+  ensureActiveEmployee(employee.id, label);
+  return { hodId: employee.id, hodName: getEmployeeName(employee) };
 }
 
 function normalizeDepartmentPayload(payload = {}) {

@@ -1042,6 +1042,53 @@ function upsertStaffEmploymentForUser(user, payload, req) {
   return updateStaff(found?.record?.id || user.id, payload, user, req);
 }
 
+function listHodOptions() {
+  const seen = new Set();
+  const options = [];
+  const inactive = new Set(["inactive", "suspended", "terminated", "deleted", "resigned", "retired"]);
+
+  function addCandidate(record) {
+    const fullName = record.fullName || record.name || null;
+    const status = String(record.status || "active").toLowerCase();
+    const keys = [record.id, record.userId, record.email].filter(Boolean).map((value) => String(value).toLowerCase());
+    if (!fullName || inactive.has(status) || keys.some((key) => seen.has(key))) {
+      return;
+    }
+    keys.forEach((key) => seen.add(key));
+    options.push({
+      id: record.id,
+      userId: record.userId || record.id || null,
+      name: fullName,
+      fullName,
+      label: fullName,
+      email: record.email || null,
+      department: record.department || null,
+      jobPosition: record.jobPosition || record.jobTitle || null,
+      role: record.role || null,
+      staffType: record.staffType || null,
+    });
+  }
+
+  for (const record of listAllStaff()) {
+    addCandidate(record);
+  }
+  for (const user of listUsers()) {
+    addCandidate({
+      id: user.id,
+      userId: user.id,
+      fullName: user.fullName || user.name,
+      email: user.email,
+      department: user.department,
+      jobTitle: user.jobTitle,
+      role: user.role,
+      staffType: user.role,
+      status: user.status,
+    });
+  }
+
+  return options.sort((left, right) => String(left.fullName).localeCompare(String(right.fullName)));
+}
+
 module.exports = {
   addStaffDocument,
   bulkAction,
@@ -1053,6 +1100,7 @@ module.exports = {
   getStaffDocuments,
   getStaffLoginHistory,
   getStaffProfile,
+  listHodOptions,
   listStaffDirectory,
   performStaffAction,
   resetStaffPassword,

@@ -51,6 +51,16 @@ departmentsRouter.get("/", (req, res) => {
   return res.json({ success: true, message: "Departments loaded.", data: result.data, meta: result.meta });
 });
 
+departmentsRouter.get("/hod-options", (_req, res) => {
+  const { listHodOptions } = require("../employers/staffDirectoryService");
+  return res.json({
+    success: true,
+    message: "HOD options loaded.",
+    data: listHodOptions(),
+    meta: {},
+  });
+});
+
 departmentsRouter.post("/", (req, res) => {
   const department = createDepartment(req.body || {}, req.user, req);
   auditDepartment(req, "Department Created", department);

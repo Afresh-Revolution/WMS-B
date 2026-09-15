@@ -121,6 +121,9 @@ test("super admin can list and add people through POST /api/v1/employees", async
   const options = await optionsResponse.json();
   assert.ok(options.data.departments.some((item) => item.name === "Software Engineers"));
   assert.ok(options.data.departments.some((item) => item.name === "Finance"));
+  assert.ok(options.data.employees.some((item) => item.fullName === "Lena Fisher"));
+  assert.ok(options.data.hods.some((item) => item.fullName === "Lena Fisher"));
+  assert.ok(options.data.meetingTypes.some((item) => item.code === "IN_PERSON"));
   assert.deepEqual(
     options.data.employmentTypes.map((item) => item.key),
     ["full_time", "nysc", "intern"]
@@ -128,6 +131,8 @@ test("super admin can list and add people through POST /api/v1/employees", async
 
   const employeeOptionsResponse = await fetch(`${baseUrl}/api/v1/employees/options`, { headers });
   assert.equal(employeeOptionsResponse.status, 200);
+  const employeeOptions = await employeeOptionsResponse.json();
+  assert.ok(employeeOptions.data.hods.some((item) => item.fullName === "Lena Fisher"));
 
   const profileResponse = await fetch(`${baseUrl}/api/v1/profile`, {
     method: "PATCH",

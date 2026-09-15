@@ -5,6 +5,7 @@ const { recordOperationalAudit } = require("../_shared/auditService");
 const {
   createStaff,
   getStaffProfile,
+  listHodOptions,
   listStaffDirectory,
   performStaffAction,
   resetStaffPassword,
@@ -102,7 +103,12 @@ employeesRouter.get("/", authenticate, requireRole("superadmin"), (req, res) => 
 });
 
 employeesRouter.get("/options", authenticate, requireRole("superadmin"), (_req, res) => {
-  return send(res, "Employee form options loaded.", getLookups());
+  const employees = listHodOptions();
+  return send(res, "Employee form options loaded.", {
+    ...getLookups(),
+    employees,
+    hods: employees,
+  });
 });
 
 employeesRouter.post("/", authenticate, requireRole("superadmin"), async (req, res) => {

@@ -135,7 +135,7 @@ test("manages department dashboard, HOD assignment, relations, and deactivation 
     headers,
     body: JSON.stringify({
       name: "software",
-      headOfDepartment: "william",
+      hodId: employee.data.id,
       description: "build apps",
     }),
   });
@@ -144,7 +144,33 @@ test("manages department dashboard, HOD assignment, relations, and deactivation 
   assert.equal(formCreated.data.name, "software");
   assert.ok(formCreated.data.code);
   assert.equal(formCreated.data.description, "build apps");
-  assert.equal(formCreated.data.hod.name, "william");
+  assert.equal(formCreated.data.hod.name, "Omar Reyes");
+
+  const unknownHodResponse = await fetch(`${baseUrl}/api/v1/departments`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: "media",
+      headOfDepartment: "Nina Patel",
+      description: "seed names are not valid HODs",
+    }),
+  });
+  assert.equal(unknownHodResponse.status, 400);
+  const unknownHod = await unknownHodResponse.json();
+  assert.equal(unknownHod.error.code, "HOD_NOT_FOUND");
+
+  const hodOptionsResponse = await fetch(`${baseUrl}/api/v1/departments/hod-options`, { headers });
+  assert.equal(hodOptionsResponse.status, 200);
+  const hodOptions = await hodOptionsResponse.json();
+  assert.ok(hodOptions.data.some((item) => item.fullName === "Omar Reyes"));
+  assert.ok(!hodOptions.data.some((item) => item.fullName === "Nina Patel"));
+
+  const lookupsResponse = await fetch(`${baseUrl}/api/v1/lookups`, { headers });
+  assert.equal(lookupsResponse.status, 200);
+  const lookups = await lookupsResponse.json();
+  assert.ok(lookups.data.employees.some((item) => item.fullName === "Omar Reyes"));
+  assert.ok(lookups.data.hods.some((item) => item.fullName === "Omar Reyes"));
+  assert.ok(lookups.data.meetingTypes.some((item) => item.code === "IN_PERSON"));
 
   const { createUser } = require("../src/auth/userStore");
   const { hashPassword } = require("../src/auth/passwords");

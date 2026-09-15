@@ -194,3 +194,50 @@ test("manages meetings with participants, room conflicts, minutes, action items,
   assert.equal(report.data.totalMeetings, 1);
   assert.equal(report.data.outstandingActionItems, 1);
 });
+
+test("creates a meeting from the Super Admin modal without a meeting type field", async (t) => {
+  const app = createTestApp(t);
+  const server = app.listen(0);
+  t.after(() => server.close());
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auth = await bootstrapSuperadmin(baseUrl);
+  const adminHeaders = {
+    "content-type": "application/json",
+    authorization: `Bearer ${auth.token}`,
+  };
+
+  const createResponse = await fetch(`${baseUrl}/api/v1/meetings`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "software",
+      date: "08/16/2026",
+      time: "10:00AM",
+      duration: "1 HOUR",
+      location: "office premises",
+    }),
+  });
+  assert.equal(createResponse.status, 201);
+  const created = await createResponse.json();
+  assert.equal(created.data.title, "software");
+  assert.equal(created.data.meetingTypeCode, "IN_PERSON");
+  assert.equal(created.data.location, "office premises");
+  assert.equal(created.data.durationMinutes, 60);
+
+  const unknownTypeResponse = await fetch(`${baseUrl}/api/v1/meetings`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "follow up",
+      date: "08/17/2026",
+      time: "11:00AM",
+      duration: "1 HOUR",
+      location: "office premises",
+      meetingTypeId: "seed-type-that-does-not-exist",
+    }),
+  });
+  assert.equal(unknownTypeResponse.status, 201);
+  const unknownType = await unknownTypeResponse.json();
+  assert.equal(unknownType.data.meetingTypeCode, "IN_PERSON");
+});

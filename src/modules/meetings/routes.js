@@ -28,13 +28,7 @@ function requireMeetingPermission(permission) {
 }
 
 function handle(handler) {
-  return (req, res, next) => {
-    try {
-      return handler(req, res, next);
-    } catch (error) {
-      return next(error);
-    }
-  };
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
 function auditMeeting(req, action, result) {

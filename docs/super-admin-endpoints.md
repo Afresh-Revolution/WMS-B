@@ -387,11 +387,15 @@ Dropdown values for Add person / employment forms:
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/lookups` | Departments, employment types, and login roles |
+| GET | `/api/v1/lookups` | Departments, employment types, login roles, **employees/HODs**, and meeting types |
 | GET | `/api/v1/lookups/departments` | Department dropdown |
 | GET | `/api/v1/lookups/employment-types` | `full_time`, `nysc`, `intern` |
-| GET | `/api/v1/employees/options` | Same lookups for the Employees page |
-| GET | `/api/v1/departments` | Full Super Admin department module |
+| GET | `/api/v1/lookups/employees` | Active system users for Assign HOD |
+| GET | `/api/v1/lookups/hods` | Same list as `/lookups/employees` |
+| GET | `/api/v1/lookups/meeting-types` | In-person / Virtual / Hybrid |
+| GET | `/api/v1/employees/options` | Same lookups plus `employees`/`hods` for the Employees page |
+| GET | `/api/v1/departments` | Full Super Admin department module. `meta.hods` is the Assign HOD dropdown |
+| GET | `/api/v1/departments/hod-options` | Assign HOD dropdown only |
 
 Default departments (seeded when the list is empty): Software Engineers, Finance, Human Resources, Media / Photography, Administration, IT & Operations.
 
@@ -437,19 +441,22 @@ Super Admin employment/profile edits use:
 
 Mounted at `/api/v1/departments`. Super Admin only for create/update/delete. `POST` from the Add department modal does **not** need a code — the backend generates one from the name.
 
+Assign HOD must be an **existing user on the system**. Do not hardcode names like Nina Patel. Load the dropdown from `GET /api/v1/lookups/hods`, `GET /api/v1/departments/hod-options`, or `meta.hods` on `GET /api/v1/departments`. Submit `hodId` (the option `id` or `userId`).
+
 ```json
 {
   "name": "software",
-  "headOfDepartment": "william",
+  "hodId": "<employee-or-user-id>",
   "description": "build apps"
 }
 ```
 
-Accepted name fields: `name`, `departmentName`. Accepted HOD fields: `headOfDepartment`, `hod`, `hodName`, `hodId`. If the HOD is an existing employee, they are linked; otherwise the name is stored until that person is added.
+Accepted name fields: `name`, `departmentName`. Accepted HOD fields: `hodId`, `headOfDepartment`, `hod`, `hodName`. A name or id that is not a current user returns `400 HOD_NOT_FOUND`. HOD is optional.
 
 | Method | Endpoint |
 | --- | --- |
 | GET | `/api/v1/departments` |
+| GET | `/api/v1/departments/hod-options` |
 | POST | `/api/v1/departments` |
 | GET | `/api/v1/departments/:id` |
 | GET | `/api/v1/departments/:id/overview` |
@@ -639,6 +646,31 @@ Generated module mounts and supported actions:
 | Documents | `/api/v1/documents` | `generate-pdf` |
 | Operational Audit | `/api/v1/operational-audit` | immutable |
 | Help | `/api/v1/help` | `publish` |
+
+## Meetings
+
+`POST /api/v1/meetings` accepts the Super Admin Create meeting modal as-is. Meeting type is **not required**. If it is omitted or a leftover seed id, the backend defaults to In-person when a location is present.
+
+```json
+{
+  "title": "software",
+  "date": "08/16/2026",
+  "time": "10:00AM",
+  "duration": "1 HOUR",
+  "location": "office premises"
+}
+```
+
+Accepted date formats: `YYYY-MM-DD` and `MM/DD/YYYY`. Accepted time: `10:00`, `10:00AM`. Accepted duration: `60`, `1 HOUR`, `1h`.
+
+| Method | Endpoint |
+| --- | --- |
+| GET | `/api/v1/meetings` |
+| POST | `/api/v1/meetings` |
+| GET | `/api/v1/meetings/:id` |
+| PATCH | `/api/v1/meetings/:id` |
+| GET | `/api/v1/meeting-types` |
+| GET | `/api/v1/meeting-rooms` |
 
 ## Primary Operational Dashboard Modules
 
