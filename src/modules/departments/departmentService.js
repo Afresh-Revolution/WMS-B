@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { applyBasicFilters, paginate, sortRecords } = require("../../utils/query");
+const { ensureDefaultDepartments } = require("../lookups/catalog");
 
 const ACTIVE_STATUSES = new Set(["active", "probation", "on leave"]);
 const INACTIVE_HOD_STATUSES = new Set(["inactive", "suspended", "terminated", "resigned", "retired"]);
@@ -35,8 +36,25 @@ function getDepartmentCode(department) {
   return department?.code || department?.departmentCode || null;
 }
 
-function findEmployee(id) {
-  return readActive("employees").find((employee) => employee.id === id) || null;
+function findEmployee(idOrName) {
+  if (!idOrName) {
+    return null;
+  }
+
+  const requested = String(idOrName).trim().toLowerCase();
+  return (
+    readActive("employees").find((employee) => {
+      const name = String(getEmployeeName(employee) || "").trim().toLowerCase();
+      return (
+        employee.id === idOrName ||
+        employee.employeeId === idOrName ||
+        employee.employee_id === idOrName ||
+        String(employee.email || "").toLowerCase() === requested ||
+        name === requested ||
+        (requested.length >= 3 && name.includes(requested))
+      );
+    }) || null
+  );
 }
 
 function getEmployeeName(employee) {
@@ -249,15 +267,28 @@ function calculateOverview(department) {
 function getDepartmentHod(department) {
   const hodId = department.hodId || department.hod_id || department.headEmployeeId || department.head_employee_id;
   const employee = hodId ? findEmployee(hodId) : null;
-  return employee
-    ? {
-        id: employee.id,
-        name: getEmployeeName(employee),
-        avatar: getEmployeeAvatar(employee),
-        status: employee.status || "active",
-        email: employee.email || null,
-      }
-    : null;
+  if (employee) {
+    return {
+      id: employee.id,
+      name: getEmployeeName(employee),
+      avatar: getEmployeeAvatar(employee),
+      status: employee.status || "active",
+      email: employee.email || null,
+    };
+  }
+
+  const hodName = department.hodName || department.headOfDepartment || department.hod || null;
+  if (!hodName) {
+    return null;
+  }
+
+  return {
+    id: null,
+    name: hodName,
+    avatar: getEmployeeAvatar({}),
+    status: "pending",
+    email: null,
+  };
 }
 
 function hasValidHod(department) {
@@ -347,6 +378,7 @@ function filterDepartments(departments, query = {}) {
 }
 
 function listDepartments(query = {}) {
+  ensureDefaultDepartments();
   const departments = filterDepartments(readActive("departments"), query);
   const result = paginate(departments, query);
   const cards = result.data.map(buildDepartmentCard);
@@ -404,22 +436,73 @@ function ensureUniqueCode(code, existingId) {
   }
 }
 
-function normalizeDepartmentPayload(payload = {}) {
-  const hodId = payload.hodId || payload.hod_id || payload.headEmployeeId || payload.head_employee_id;
-  const assistantHodId = payload.assistantHodId || payload.assistant_hod_id;
-  if (hodId) {
-    ensureActiveEmployee(hodId, "HOD");
+function generateDepartmentCode(name, existingId) {
+  const words = String(name || "").trim().split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const base = (
+    words.length >= 2 ? words.map((word) => word[0]).join("") : words[0] || "DEPT"
+  )
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 8) || "DEPT";
+
+  let code = base;
+  let suffix = 1;
+  while (
+    readActive("departments").some(
+      (department) =>
+        department.id !== existingId && String(getDepartmentCode(department) || "").toUpperCase() === code
+    )
+  ) {
+    suffix += 1;
+    code = `${base}-${suffix}`;
   }
-  if (assistantHodId) {
-    ensureActiveEmployee(assistantHodId, "Assistant HOD");
+  return code;
+}
+
+function resolveHodReference(value, label = "HOD") {
+  if (!value) {
+    return { hodId: null, hodName: null };
   }
 
+  const employee = findEmployee(value);
+  if (employee) {
+    ensureActiveEmployee(employee.id, label);
+    return { hodId: employee.id, hodName: getEmployeeName(employee) };
+  }
+
+  const looksLikeId = /^[0-9a-f-]{8,}$/i.test(String(value).trim());
+  if (looksLikeId) {
+    ensureActiveEmployee(value, label);
+  }
+
+  return { hodId: null, hodName: String(value).trim() };
+}
+
+function normalizeDepartmentPayload(payload = {}) {
+  const hodValue =
+    payload.hodId ||
+    payload.hod_id ||
+    payload.headEmployeeId ||
+    payload.head_employee_id ||
+    payload.headOfDepartment ||
+    payload.head_of_department ||
+    payload.hodName ||
+    payload.hod_name ||
+    payload.hod ||
+    payload.head;
+  const assistantHodValue = payload.assistantHodId || payload.assistant_hod_id || payload.assistantHod || payload.assistant_hod;
+  const hod = resolveHodReference(hodValue, "HOD");
+  const assistantHod = resolveHodReference(assistantHodValue, "Assistant HOD");
+  const name = payload.name || payload.departmentName || payload.department_name || payload.title;
+
   return compactObject({
-    name: payload.name || payload.departmentName,
-    code: payload.code || payload.departmentCode,
+    name,
+    code: payload.code || payload.departmentCode || payload.department_code,
     description: payload.description,
-    hodId,
-    assistantHodId,
+    hodId: hod.hodId,
+    hodName: hod.hodName,
+    assistantHodId: assistantHod.hodId,
+    assistantHodName: assistantHod.hodName,
     branchId: payload.branchId || payload.branch_id,
     branch: payload.branch,
     location: payload.location,
@@ -435,11 +518,15 @@ function normalizeDepartmentPayload(payload = {}) {
 
 function createDepartment(payload, actor, req) {
   const normalized = normalizeDepartmentPayload(payload);
-  if (!normalized.name || !normalized.code) {
-    const error = new Error("Department name and code are required.");
+  if (!normalized.name) {
+    const error = new Error("Department name is required.");
     error.statusCode = 400;
     error.publicMessage = error.message;
+    error.code = "DEPARTMENT_NAME_REQUIRED";
     throw error;
+  }
+  if (!normalized.code) {
+    normalized.code = generateDepartmentCode(normalized.name);
   }
 
   ensureUniqueCode(normalized.code);

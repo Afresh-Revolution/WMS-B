@@ -32,6 +32,10 @@ profileRouter.put("/", handle(async (req, res) => {
   return send(res, "Profile updated.", await profileService.updateProfile(req.user.id, req.body || {}, req));
 }));
 
+profileRouter.patch("/", handle(async (req, res) => {
+  return send(res, "Profile updated.", await profileService.updateProfile(req.user.id, req.body || {}, req));
+}));
+
 profileRouter.put("/password", handle(async (req, res) => {
   return send(res, "Password changed.", await profileService.changePassword(req.user.id, req.body || {}, req));
 }));

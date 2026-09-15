@@ -129,4 +129,46 @@ test("manages department dashboard, HOD assignment, relations, and deactivation 
   assert.equal(deactivateResponse.status, 200);
   const deactivated = await deactivateResponse.json();
   assert.equal(deactivated.data.status, "inactive");
+
+  const formCreateResponse = await fetch(`${baseUrl}/api/v1/departments`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: "software",
+      headOfDepartment: "william",
+      description: "build apps",
+    }),
+  });
+  assert.equal(formCreateResponse.status, 201);
+  const formCreated = await formCreateResponse.json();
+  assert.equal(formCreated.data.name, "software");
+  assert.ok(formCreated.data.code);
+  assert.equal(formCreated.data.description, "build apps");
+  assert.equal(formCreated.data.hod.name, "william");
+
+  const { createUser } = require("../src/auth/userStore");
+  const { hashPassword } = require("../src/auth/passwords");
+  createUser({
+    name: "HR User",
+    email: "hr.dept@example.com",
+    passwordHash: hashPassword("password123"),
+    role: "hr",
+    status: "active",
+  });
+  const hrLoginResponse = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "hr.dept@example.com", password: "password123" }),
+  });
+  assert.equal(hrLoginResponse.status, 200);
+  const hrLogin = await hrLoginResponse.json();
+  const hrCreateResponse = await fetch(`${baseUrl}/api/v1/hr/departments`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${hrLogin.token}`,
+    },
+    body: JSON.stringify({ name: "should-fail", description: "HR cannot add this" }),
+  });
+  assert.equal(hrCreateResponse.status, 403);
 });

@@ -5,6 +5,7 @@ const postgresUserStore = require("../../auth/postgresUserStore");
 const { createUser, getUserById, listUsers, sanitizeUser, updateUser, updateUserPassword } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { getRolePermissions, ROLE_DEFINITIONS } = require("../../constants/rbac");
+const { resolveDepartment, resolveEmploymentType } = require("../lookups/catalog");
 const { applyBasicFilters, paginate, sortRecords } = require("../../utils/query");
 
 const ROLE_ALIASES = Object.freeze({
@@ -353,8 +354,26 @@ function writeActivity({ staffId, staffType, actor, action, oldValue, newValue, 
 }
 
 function findStaffRecord(id) {
+  if (!id) {
+    return null;
+  }
+
+  const requested = String(id).trim().toLowerCase();
   for (const [staffType, collection] of Object.entries(STAFF_COLLECTIONS)) {
-    const record = readCollection(collection).find((candidate) => candidate.id === id && !candidate.deletedAt);
+    const record = readCollection(collection).find((candidate) => {
+      if (candidate.deletedAt) {
+        return false;
+      }
+      const email = String(candidate.email || "").toLowerCase();
+      const name = String(candidate.fullName || candidate.name || "").toLowerCase();
+      return (
+        candidate.id === id ||
+        candidate.userId === id ||
+        candidate.employeeId === id ||
+        email === requested ||
+        name === requested
+      );
+    });
     if (!record) {
       continue;
     }
@@ -375,6 +394,7 @@ function findStaffRecord(id) {
         id: user.id,
         userId: user.id,
         name: user.name,
+        fullName: user.fullName || user.name,
         email: user.email,
         role: user.role,
         status: user.status,
@@ -405,13 +425,20 @@ function saveStaffRecord(collection, id, payload) {
 }
 
 function normalizeCreatePayload(body = {}) {
-  const staffType = normalizeStaffType(body.staffType || body.personType || body.type);
-  const personal = body.personalInformation || body.personal || {};
   const employment = body.employmentInformation || body.employment || {};
+  const employmentType = resolveEmploymentType(
+    employment.employmentType || body.employmentType || body.employment_type || body.staffType
+  );
+  const requestedStaffType = body.staffType || body.personType || body.type;
+  const staffType = normalizeStaffType(requestedStaffType || employmentType.staffType);
+  const personal = body.personalInformation || body.personal || {};
   const financial = body.financialInformation || body.financial || {};
   const emergencyContact = body.emergencyContact || {};
   const systemAccess = body.systemAccess || {};
   const documents = Array.isArray(body.documents) ? body.documents : [];
+  const department = resolveDepartment(
+    body.departmentId || body.department_id || employment.departmentId || body.department || employment.department
+  );
 
   const fullName =
     body.fullName ||
@@ -449,14 +476,16 @@ function normalizeCreatePayload(body = {}) {
       institution: employment.institution || body.institution,
       course: employment.course || body.course,
       fieldOfStudy: employment.fieldOfStudy || body.fieldOfStudy,
-      jobTitle: employment.jobTitle || body.jobTitle || body.title || body.position,
+      jobTitle: employment.jobTitle || body.jobTitle || body.title || body.position || body.roleTitle,
       position: employment.position || body.position || body.jobTitle || body.title,
       positionId: employment.positionId || body.positionId,
-      department: employment.department || body.department,
-      departmentId: employment.departmentId || body.departmentId,
+      department: department?.name || employment.department || body.department,
+      departmentId: department?.id || employment.departmentId || body.departmentId,
       managerId: employment.managerId || body.managerId,
       supervisorId: employment.supervisorId || body.supervisorId,
-      employmentType: employment.employmentType || body.employmentType,
+      manager: employment.manager || body.manager || body.reportsTo || body.reports_to,
+      employmentType: employmentType.label,
+      employment_type: employmentType.key,
       employmentStartDate: employment.employmentStartDate || body.employmentStartDate,
       hireDate: employment.hireDate || body.hireDate,
       startDate: employment.startDate || body.startDate,
@@ -664,24 +693,104 @@ function getStaffProfile(id) {
   };
 }
 
+function parseEmploymentDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    return iso[0];
+  }
+  const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const first = Number(slash[1]);
+    const second = Number(slash[2]);
+    const year = slash[3];
+    if (first > 12) {
+      return `${year}-${String(second).padStart(2, "0")}-${String(first).padStart(2, "0")}`;
+    }
+    return `${year}-${String(first).padStart(2, "0")}-${String(second).padStart(2, "0")}`;
+  }
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return raw;
+}
+
+function employmentUpdatesFromPayload(payload = {}) {
+  const employment = payload.employmentInformation || payload.employment || payload.employmentDetails || {};
+  const department = resolveDepartment(
+    payload.departmentId || payload.department_id || employment.departmentId || payload.department || employment.department
+  );
+  const employmentTypeValue = payload.employmentType || payload.employment_type || employment.employmentType;
+  const employmentType = employmentTypeValue ? resolveEmploymentType(employmentTypeValue) : null;
+  const startDate = parseEmploymentDate(
+    payload.startDate || payload.start_date || payload.employmentStartDate || payload.hireDate || employment.startDate
+  );
+  const maybeJobTitle =
+    payload.role && !ROLE_DEFINITIONS[String(payload.role).trim().toLowerCase().replace(/[\s-]+/g, "_")]
+      ? payload.role
+      : null;
+  const jobTitle = payload.jobTitle || payload.job_title || payload.position || payload.roleTitle || employment.jobTitle || maybeJobTitle;
+  const reportsTo = payload.reportsTo || payload.reports_to || payload.manager || employment.manager || employment.reportsTo;
+
+  return compactObject({
+    jobTitle,
+    position: jobTitle || payload.position,
+    department: department?.name || payload.department || employment.department,
+    departmentId: department?.id || payload.departmentId || employment.departmentId,
+    employmentType: employmentType?.label || payload.employmentType,
+    employment_type: employmentType?.key || payload.employment_type,
+    employmentStartDate: startDate,
+    hireDate: startDate,
+    startDate,
+    manager: reportsTo,
+    reportsTo,
+    phone: payload.phone,
+    fullName: payload.fullName || payload.name || payload.displayName,
+    name: payload.fullName || payload.name || payload.displayName,
+  });
+}
+
 function updateStaff(id, payload, actor, req) {
-  const found = findStaffRecord(id);
-  if (!found || !found.collection) {
+  let found = findStaffRecord(id);
+  if (!found) {
     return null;
   }
 
+  const updates = employmentUpdatesFromPayload(payload);
+  if (!found.collection) {
+    const collection = getCollectionForStaffType(found.staffType === "admin" || found.staffType === "manager" ? "employee" : found.staffType);
+    const timestamp = now();
+    const created = {
+      id: crypto.randomUUID(),
+      ...found.record,
+      ...updates,
+      userId: found.record.userId || found.record.id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const records = readCollection(collection);
+    records.push(created);
+    writeCollection(collection, records);
+    found = { staffType: "employee", collection, record: created };
+    id = created.id;
+  }
+
   const oldValue = normalizeStaffRecord(found.record, found.staffType);
-  const updated = saveStaffRecord(found.collection, id, payload);
+  const updated = saveStaffRecord(found.collection, found.record.id, updates);
   const normalized = normalizeStaffRecord(updated, found.staffType);
   createHistoryRecord("employment_history", {
-    staffId: id,
+    staffId: found.record.id,
     staffType: found.staffType,
     event: "profile_updated",
     oldValue,
     newValue: normalized,
     actorId: actor?.id || null,
   });
-  writeActivity({ staffId: id, staffType: found.staffType, actor, action: "Profile Updated", oldValue, newValue: normalized, req });
+  writeActivity({ staffId: found.record.id, staffType: found.staffType, actor, action: "Profile Updated", oldValue, newValue: normalized, req });
   return { oldValue, record: normalized };
 }
 
@@ -925,6 +1034,14 @@ function bulkAction({ ids = [], action, payload = {}, confirmation }, actor, req
   return ids.map((id) => ({ id, result: performStaffAction(id, action, payload, actor, req) })).filter((item) => item.result);
 }
 
+function upsertStaffEmploymentForUser(user, payload, req) {
+  if (!user?.id) {
+    return null;
+  }
+  const found = findStaffRecord(user.id) || findStaffRecord(user.email);
+  return updateStaff(found?.record?.id || user.id, payload, user, req);
+}
+
 module.exports = {
   addStaffDocument,
   bulkAction,
@@ -940,5 +1057,6 @@ module.exports = {
   performStaffAction,
   resetStaffPassword,
   updateStaff,
+  upsertStaffEmploymentForUser,
   writeActivity,
 };

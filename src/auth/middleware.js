@@ -34,6 +34,7 @@ async function authenticate(req, res, next) {
 
   const canUsePasswordResetRoutes =
     req.originalUrl.includes("/auth/change-password") ||
+    req.originalUrl.includes("/profile/password") ||
     req.originalUrl.includes("/auth/me") ||
     req.originalUrl.includes("/auth/logout") ||
     req.originalUrl.includes("/auth/sessions");

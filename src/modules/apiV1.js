@@ -18,6 +18,7 @@ const { employersRouter } = require("./employers/routes");
 const { eventsRouter } = require("./events/routes");
 const { expensePoliciesRouter, expensesRouter } = require("./expenses/routes");
 const { emailConfigRouter } = require("./email/email.routes");
+const { lookupsRouter } = require("./lookups/routes");
 const { leaveRouter } = require("./leave/routes");
 const { meetingRoomsRouter, meetingTypesRouter, meetingsRouter } = require("./meetings/routes");
 const { integrationsRouter, paystackPaymentsRouter, paystackWebhookRouter } = require("./integrations/integration.routes");
@@ -49,6 +50,7 @@ function createApiV1Router() {
   const router = express.Router();
 
   router.use("/auth", authRouter);
+  router.use("/lookups", lookupsRouter);
   router.use("/profile", profileRouter);
   router.use("/super-admin", superAdminRouter);
   router.use("/hr", hrRouter);

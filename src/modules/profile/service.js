@@ -3,10 +3,12 @@ const fs = require("fs/promises");
 const path = require("path");
 const { hashPassword, verifyPassword } = require("../../auth/passwords");
 const { getUserById, sanitizeUser, updateUser, updateUserPassword } = require("../../auth/userStore");
+const postgresUserStore = require("../../auth/postgresUserStore");
 const { listSessions, revokeSession, revokeUserSessions } = require("../../auth/sessionStore");
 const { readCollection } = require("../../database/jsonStore");
 const securityService = require("../security/securityService");
 const technicalAuditRepository = require("../technicalAudit/repository");
+const { upsertStaffEmploymentForUser } = require("../employers/staffDirectoryService");
 const repository = require("./repository");
 
 const ALLOWED_IMAGE_TYPES = Object.freeze({
@@ -24,8 +26,24 @@ function createHttpError(statusCode, message, code, details = {}) {
   return error;
 }
 
+function usingPostgresUsers() {
+  return postgresUserStore.isEnabled();
+}
+
+async function loadUser(id) {
+  return usingPostgresUsers() ? postgresUserStore.getUserById(id) : getUserById(id);
+}
+
+async function saveUser(id, payload) {
+  return usingPostgresUsers() ? postgresUserStore.updateUser(id, payload) : updateUser(id, payload);
+}
+
+async function saveUserPassword(id, passwordHash) {
+  return usingPostgresUsers() ? postgresUserStore.updateUserPassword(id, passwordHash) : updateUserPassword(id, passwordHash);
+}
+
 async function getProfile(userId, requester) {
-  const user = getUserById(userId);
+  const user = await loadUser(userId);
   if (!user) throw createHttpError(404, "Profile not found.", "PROFILE_NOT_FOUND");
   await repository.upsertUserProfile(user);
   const security = await repository.getSecurity(userId);
@@ -45,7 +63,7 @@ async function getProfile(userId, requester) {
 }
 
 async function updateProfile(userId, payload = {}, req) {
-  const current = getUserById(userId);
+  const current = await loadUser(userId);
   if (!current) throw createHttpError(404, "Profile not found.", "PROFILE_NOT_FOUND");
   const allowed = {};
   if (payload.phone !== undefined) allowed.phone = payload.phone;
@@ -62,8 +80,13 @@ async function updateProfile(userId, payload = {}, req) {
     allowed.avatarUrl = payload.avatar || payload.avatarUrl || payload.avatar_url;
     allowed.avatar_url = allowed.avatarUrl;
   }
-  const updated = updateUser(userId, allowed);
+  if (payload.jobTitle !== undefined || payload.job_title !== undefined || payload.roleTitle !== undefined) {
+    allowed.jobTitle = payload.jobTitle || payload.job_title || payload.roleTitle;
+    allowed.job_title = allowed.jobTitle;
+  }
+  const updated = Object.keys(allowed).length ? await saveUser(userId, allowed) : current;
   await repository.upsertUserProfile(updated);
+  const employment = upsertStaffEmploymentForUser(updated || current, payload, req);
   await technicalAuditRepository.recordLog({
     req,
     action: "PROFILE_UPDATED",
@@ -72,18 +95,27 @@ async function updateProfile(userId, payload = {}, req) {
     status: "success",
     metadata: { changedFields: Object.keys(allowed) },
   });
-  return sanitizeProfile(updated, req.user.role === "superadmin");
+  const profile = sanitizeProfile(updated, req.user.role === "superadmin");
+  return {
+    ...profile,
+    employment: employment?.record || null,
+    department: employment?.record?.department || profile.departmentId,
+    jobTitle: employment?.record?.jobPosition || profile.jobTitle,
+    employmentType: employment?.record?.employmentType || null,
+    startDate: employment?.record?.dateJoined || null,
+    reportsTo: employment?.record?.manager || null,
+  };
 }
 
 async function changePassword(userId, payload = {}, req) {
-  const user = getUserById(userId);
+  const user = await loadUser(userId);
   if (!user || !verifyPassword(payload.currentPassword, user.passwordHash)) {
     await technicalAuditRepository.recordLog({ req, action: "PASSWORD_CHANGE_FAILED", module: "Profile", target: userId, status: "failed" });
     throw createHttpError(401, "Current password is incorrect.", "INVALID_CURRENT_PASSWORD");
   }
   securityService.validatePasswordAgainstPolicy(payload.newPassword, userId);
   securityService.recordPasswordHistory(user);
-  const updated = updateUserPassword(userId, hashPassword(payload.newPassword));
+  const updated = await saveUserPassword(userId, hashPassword(payload.newPassword));
   if (payload.invalidateOtherSessions || payload.revokeOtherSessions) {
     revokeOtherSessions(userId, req.authSessionId, req);
   }
@@ -107,7 +139,7 @@ async function uploadAvatar(userId, payload = {}, req) {
   const filePath = path.join(directory, filename);
   await fs.writeFile(filePath, image.buffer, { mode: 0o600 });
   const avatarUrl = `/uploads/avatars/${filename}`;
-  const updated = updateUser(userId, { avatarUrl, avatar_url: avatarUrl });
+  const updated = await saveUser(userId, { avatarUrl, avatar_url: avatarUrl });
   await repository.upsertUserProfile(updated);
   await technicalAuditRepository.recordLog({ req, action: "PROFILE_AVATAR_UPDATED", module: "Profile", target: userId, status: "success", metadata: { mimeType: image.mimeType, sizeBytes: image.buffer.length } });
   return { avatarUrl, profile: sanitizeProfile(updated, false) };
@@ -201,7 +233,7 @@ async function verifyMfa(userId, payload = {}, req) {
 }
 
 async function disableMfa(userId, payload = {}, req) {
-  const user = getUserById(userId);
+  const user = await loadUser(userId);
   if (!user || !verifyPassword(payload.currentPassword, user.passwordHash)) {
     throw createHttpError(401, "Current password is incorrect.", "INVALID_CURRENT_PASSWORD");
   }

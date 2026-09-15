@@ -15,6 +15,7 @@ const { employersRouter } = require("../employers/routes");
 const { eventsRouter } = require("../events/routes");
 const { expensePoliciesRouter, expensesRouter } = require("../expenses/routes");
 const { integrationsRouter, paystackPaymentsRouter, paystackWebhookRouter } = require("../integrations/integration.routes");
+const { lookupsRouter } = require("../lookups/routes");
 const { leaveRouter } = require("../leave/routes");
 const { meetingRoomsRouter, meetingTypesRouter, meetingsRouter } = require("../meetings/routes");
 const { notificationConfigRouter, notificationsRouter } = require("../notifications/notification.routes");
@@ -92,6 +93,7 @@ superAdminRouter.get("/status", handle((_req, res) => send(res, "Super Admin sta
 superAdminRouter.get("/health", handle((_req, res) => send(res, "Super Admin health loaded.", systemService.getHealth())));
 
 superAdminRouter.use("/profile", profileRouter);
+superAdminRouter.use("/lookups", lookupsRouter);
 superAdminRouter.use("/system-management", systemRouter);
 superAdminRouter.use("/system", systemRouter);
 superAdminRouter.use("/system-health", systemHealthRouter);

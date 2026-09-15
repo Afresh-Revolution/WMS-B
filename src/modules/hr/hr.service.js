@@ -1181,7 +1181,9 @@ function listDepartments(query, user) {
 }
 
 function createDepartment(payload, req) {
-  assertHrAccess(req.user, "departments.create");
+  if (String(req.user?.role || "").toLowerCase() !== "superadmin") {
+    throw createHttpError(403, "Only Super Admin can add departments.", "DEPARTMENT_CREATE_FORBIDDEN");
+  }
   const department = departmentService.createDepartment(withOrganization(payload, req.user), req.user, req);
   audit(req, "Department Created", "Department", department.id, null, department);
   return department;

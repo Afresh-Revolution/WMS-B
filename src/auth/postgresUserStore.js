@@ -283,6 +283,11 @@ async function updateUser(id, payload = {}) {
   if (payload.lastActivityAt !== undefined) set("last_activity_at", payload.lastActivityAt);
   if (payload.mustChangePassword !== undefined) set("must_change_password", Boolean(payload.mustChangePassword));
   if (payload.forcePasswordReset !== undefined) set("force_password_reset", Boolean(payload.forcePasswordReset));
+  if (payload.name !== undefined || payload.fullName !== undefined) set("full_name", payload.fullName || payload.name || null);
+  if (payload.phone !== undefined) set("phone", payload.phone || null);
+  if (payload.departmentId !== undefined) set("department_id", payload.departmentId || null);
+  if (payload.jobTitle !== undefined || payload.job_title !== undefined) set("job_title", payload.jobTitle || payload.job_title || null);
+  if (payload.avatarUrl !== undefined || payload.avatar_url !== undefined) set("avatar_url", payload.avatarUrl || payload.avatar_url || null);
   if (payload.updatedBy !== undefined) set("updated_by", payload.updatedBy || null);
 
   if (!fields.length) {

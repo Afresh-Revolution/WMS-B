@@ -381,7 +381,42 @@ Add-person body can be a nested staff payload or a flat form:
 }
 ```
 
-If `email` is present, the backend also creates a dashboard login with the submitted `role` (`employee`, `hr`, `hod`, `manager`, `accountant`, `secretary`, `intern`, `nysc_intern`, and aliases such as `NYSC Intern`). Role permissions are assigned automatically so the new account can sign in on the shared login page and land in the matching workspace. If no password is sent, a temporary password is returned in `meta.temporaryPassword`.
+If `email` is omitted, the backend generates a login email. A temporary password is always created and returned in `meta.temporaryPassword`. The new user **must change that password on first login** (`mustChangePassword: true`). Until they POST `/api/v1/auth/change-password`, other APIs return `403 PASSWORD_CHANGE_REQUIRED`.
+
+Dropdown values for Add person / employment forms:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/lookups` | Departments, employment types, and login roles |
+| GET | `/api/v1/lookups/departments` | Department dropdown |
+| GET | `/api/v1/lookups/employment-types` | `full_time`, `nysc`, `intern` |
+| GET | `/api/v1/employees/options` | Same lookups for the Employees page |
+| GET | `/api/v1/departments` | Full Super Admin department module |
+
+Default departments (seeded when the list is empty): Software Engineers, Finance, Human Resources, Media / Photography, Administration, IT & Operations.
+
+Employment types from the backend:
+
+```json
+[
+  { "key": "full_time", "label": "Full-time" },
+  { "key": "nysc", "label": "NYSC" },
+  { "key": "intern", "label": "Intern" }
+]
+```
+
+Do not hardcode those dropdowns on the frontend.
+
+Super Admin employment/profile edits use:
+
+| Method | Endpoint |
+| --- | --- |
+| GET | `/api/v1/profile` |
+| PATCH | `/api/v1/profile` |
+| PUT | `/api/v1/profile` |
+| PATCH | `/api/v1/employees/:id` |
+
+`PATCH /api/v1/profile` accepts employment fields (`department`, `employmentType`, `startDate`, `reportsTo`, job title as `role`/`jobTitle`) and no longer 404s for Super Admin. For another person, PATCH `/api/v1/employees/:id` (id, email, or name).
 
 ## Roles And Permissions
 
@@ -400,7 +435,17 @@ If `email` is present, the backend also creates a dashboard login with the submi
 
 ## Departments
 
-Mounted at `/api/v1/departments`.
+Mounted at `/api/v1/departments`. Super Admin only for create/update/delete. `POST` from the Add department modal does **not** need a code — the backend generates one from the name.
+
+```json
+{
+  "name": "software",
+  "headOfDepartment": "william",
+  "description": "build apps"
+}
+```
+
+Accepted name fields: `name`, `departmentName`. Accepted HOD fields: `headOfDepartment`, `hod`, `hodName`, `hodId`. If the HOD is an existing employee, they are linked; otherwise the name is stored until that person is added.
 
 | Method | Endpoint |
 | --- | --- |
