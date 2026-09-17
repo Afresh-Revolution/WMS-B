@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const { hashPassword } = require("../../auth/passwords");
 const { revokeUserSessions } = require("../../auth/sessionStore");
-const postgresUserStore = require("../../auth/postgresUserStore");
-const { createUser, getUserById, listUsers, sanitizeUser, updateUser, updateUserPassword } = require("../../auth/userStore");
+const accountStore = require("../../auth/accountStore");
+const { getUserById, listUsers } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { getRolePermissions, ROLE_DEFINITIONS } = require("../../constants/rbac");
 const { resolveDepartment, resolveEmploymentType } = require("../lookups/catalog");
@@ -88,7 +88,20 @@ function resolveAssignedRole(roleValue) {
 }
 
 function createAuthUser(payload) {
-  return postgresUserStore.isEnabled() ? postgresUserStore.createUser(payload) : createUser(payload);
+  return accountStore.createUser(payload);
+}
+
+function generateLoginEmail(fullName) {
+  const slug = String(fullName || "user")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 40) || "user";
+  return `${slug}.${crypto.randomBytes(2).toString("hex")}@afresh.local`;
+}
+
+function generateTemporaryPassword() {
+  return `Temp${crypto.randomBytes(4).toString("hex")}A1!`;
 }
 
 function getCollectionForStaffType(staffType) {
@@ -516,20 +529,14 @@ function normalizeCreatePayload(body = {}) {
 }
 
 async function createSystemUserIfRequested({ record, systemAccess }) {
-  const wantsAccess =
-    systemAccess.createAccount ||
-    systemAccess.dashboardAccess ||
-    systemAccess.username ||
-    systemAccess.email ||
-    systemAccess.initialPassword ||
-    systemAccess.password;
-
-  if (!wantsAccess) {
-    return null;
-  }
-
-  const password = systemAccess.initialPassword || systemAccess.password;
-  const email = systemAccess.email || record.email || systemAccess.username;
+  const generatedPassword = !systemAccess.initialPassword && !systemAccess.password;
+  const email = systemAccess.email || record.email || systemAccess.username || generateLoginEmail(record.fullName || record.name);
+  const password = systemAccess.initialPassword || systemAccess.password || generateTemporaryPassword();
+  const assignedRole = resolveAssignedRole(systemAccess.role || record.role || "employee");
+  const permissions =
+    Array.isArray(systemAccess.permissions) && systemAccess.permissions.length > 0
+      ? systemAccess.permissions
+      : assignedRole.permissions;
 
   if (typeof email !== "string" || !email.trim()) {
     const error = new Error("Email or username is required when creating system access.");
@@ -545,26 +552,29 @@ async function createSystemUserIfRequested({ record, systemAccess }) {
     throw error;
   }
 
-  const assignedRole = resolveAssignedRole(systemAccess.role || record.role || "employee");
-  const permissions =
-    Array.isArray(systemAccess.permissions) && systemAccess.permissions.length > 0
-      ? systemAccess.permissions
-      : assignedRole.permissions;
+  record.email = record.email || email;
 
-  return createAuthUser({
+  const user = await createAuthUser({
     name: record.fullName || record.name,
     fullName: record.fullName || record.name,
     email,
+    phone: record.phone || null,
     passwordHash: hashPassword(password),
     role: assignedRole.key,
     roleId: assignedRole.key,
     permissions,
-    status: "active",
+    status: record.status || "active",
     accountType: assignedRole.key === "superadmin" ? "SUPER_ADMIN" : assignedRole.key === "admin" ? "ADMIN" : "STAFF",
-    mustChangePassword: Boolean(systemAccess.mustChangePassword),
+    mustChangePassword:
+      systemAccess.mustChangePassword !== undefined ? Boolean(systemAccess.mustChangePassword) : generatedPassword,
+    department: record.department || null,
     departmentId: record.departmentId || null,
     employeeId: record.employeeId || record.id || null,
+    jobTitle: record.jobTitle || record.position || null,
   });
+  user.temporaryPassword = password;
+  user.loginEmail = email;
+  return user;
 }
 
 async function createStaff(body, actor, req) {
@@ -612,7 +622,10 @@ async function createStaff(body, actor, req) {
     req,
   });
 
-  return normalizeStaffRecord(staffRecord, staffType);
+  return {
+    ...normalizeStaffRecord(staffRecord, staffType),
+    loginEmail: user?.loginEmail || staffRecord.email || null,
+  };
 }
 
 function getStaffProfile(id) {
@@ -794,7 +807,7 @@ function updateStaff(id, payload, actor, req) {
   return { oldValue, record: normalized };
 }
 
-function performStaffAction(id, action, payload = {}, actor, req) {
+async function performStaffAction(id, action, payload = {}, actor, req) {
   const found = findStaffRecord(id);
   if (!found || !found.collection) {
     return null;
@@ -808,7 +821,7 @@ function performStaffAction(id, action, payload = {}, actor, req) {
   if (["deactivate", "activate", "suspend", "terminate"].includes(action)) {
     updates.status = action === "activate" ? "active" : action === "deactivate" ? "inactive" : action === "suspend" ? "suspended" : "terminated";
     if (updates.status !== "active" && found.record.userId) {
-      updateUser(found.record.userId, { status: updates.status === "suspended" ? "suspended" : "inactive" });
+      await accountStore.updateUser(found.record.userId, { status: updates.status === "suspended" ? "suspended" : "inactive" });
       revokeUserSessions(found.record.userId, actor?.id);
     }
   } else if (action === "transfer" || action === "department") {
@@ -845,7 +858,7 @@ function performStaffAction(id, action, payload = {}, actor, req) {
   } else if (action === "role") {
     updates = compactObject({ role: payload.role, permissions: payload.permissions });
     if (found.record.userId) {
-      updateUser(found.record.userId, compactObject({ role: payload.role, permissions: payload.permissions }));
+      await accountStore.updateUser(found.record.userId, compactObject({ role: payload.role, permissions: payload.permissions }));
     }
     historyEvent = "role_assigned";
   } else if (action === "change-salary") {
@@ -870,14 +883,14 @@ function performStaffAction(id, action, payload = {}, actor, req) {
   return { oldValue, record: normalized };
 }
 
-function resetStaffPassword(id, password, actor, req) {
+async function resetStaffPassword(id, password, actor, req) {
   const found = findStaffRecord(id);
   if (!found || !found.record.userId) {
     return null;
   }
 
-  const updatedUser = updateUserPassword(found.record.userId, hashPassword(password));
-  updateUser(found.record.userId, { forcePasswordReset: true });
+  const updatedUser = await accountStore.updateUserPassword(found.record.userId, hashPassword(password));
+  await accountStore.updateUser(found.record.userId, { forcePasswordReset: true, mustChangePassword: true });
   revokeUserSessions(found.record.userId, actor?.id);
   writeActivity({
     staffId: id,
@@ -887,7 +900,7 @@ function resetStaffPassword(id, password, actor, req) {
     newValue: { userId: found.record.userId },
     req,
   });
-  return sanitizeUser(updatedUser);
+  return accountStore.sanitizeUser(updatedUser);
 }
 
 function forceStaffLogout(id, actor, req) {
@@ -1023,7 +1036,7 @@ async function bulkImport({ rows = [], confirm }, actor, req) {
   return { preview, imported, requiresConfirmation: false };
 }
 
-function bulkAction({ ids = [], action, payload = {}, confirmation }, actor, req) {
+async function bulkAction({ ids = [], action, payload = {}, confirmation }, actor, req) {
   if (action === "deactivate" && confirmation !== "BULK DEACTIVATE") {
     const error = new Error("Bulk deactivate requires confirmation.");
     error.statusCode = 400;
@@ -1031,7 +1044,8 @@ function bulkAction({ ids = [], action, payload = {}, confirmation }, actor, req
     throw error;
   }
 
-  return ids.map((id) => ({ id, result: performStaffAction(id, action, payload, actor, req) })).filter((item) => item.result);
+  const results = await Promise.all(ids.map(async (id) => ({ id, result: await performStaffAction(id, action, payload, actor, req) })));
+  return results.filter((item) => item.result);
 }
 
 function upsertStaffEmploymentForUser(user, payload, req) {
@@ -1042,7 +1056,7 @@ function upsertStaffEmploymentForUser(user, payload, req) {
   return updateStaff(found?.record?.id || user.id, payload, user, req);
 }
 
-function listHodOptions() {
+async function listHodOptions() {
   const seen = new Set();
   const options = [];
   const inactive = new Set(["inactive", "suspended", "terminated", "deleted", "resigned", "retired"]);
@@ -1072,7 +1086,7 @@ function listHodOptions() {
   for (const record of listAllStaff()) {
     addCandidate(record);
   }
-  for (const user of listUsers()) {
+  for (const user of await accountStore.listUsers()) {
     addCandidate({
       id: user.id,
       userId: user.id,

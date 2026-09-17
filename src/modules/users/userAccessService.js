@@ -1,9 +1,8 @@
 const crypto = require("crypto");
 const { hashPassword } = require("../../auth/passwords");
 const { revokeSession, revokeUserSessions, listSessions } = require("../../auth/sessionStore");
-const postgresUserStore = require("../../auth/postgresUserStore");
+const accountStore = require("../../auth/accountStore");
 const {
-  createUser: createLocalUser,
   getUserByEmail,
   getUserById,
   listUsers,
@@ -35,7 +34,7 @@ function createHttpError(statusCode, message, code, details = {}) {
 }
 
 function createAuthUser(payload) {
-  return postgresUserStore.isEnabled() ? postgresUserStore.createUser(payload) : createLocalUser(payload);
+  return accountStore.createUser(payload);
 }
 
 function normalizeEmail(email) {
@@ -269,12 +268,12 @@ function decorateUser(user) {
   };
 }
 
-function listUserAccounts(query = {}) {
+async function listUserAccounts(query = {}) {
   const normalizedQuery = {
     ...query,
     q: query.q || query.search,
   };
-  let users = listUsers().filter((user) => user.status !== "deleted" && !user.deletedAt);
+  let users = (await accountStore.listUsers()).filter((user) => user.status !== "deleted" && !user.deletedAt);
   users = applyBasicFilters(users, normalizedQuery, USER_SEARCH_FIELDS);
 
   if (query.role) {
@@ -423,8 +422,8 @@ async function createUserAccount(payload, actor, req) {
   };
 }
 
-function getUserAccountDetail(id) {
-  const user = getUserById(id);
+async function getUserAccountDetail(id) {
+  const user = await accountStore.getUserById(id);
   if (!user || user.deletedAt || user.status === "deleted") {
     return null;
   }
@@ -449,12 +448,12 @@ function getUserAccountDetail(id) {
     failedLoginAttempts: failedLogins,
     activity,
     recentSecurityEvents: securityEvents,
-    createdBy: user.createdBy ? decorateUser(getUserById(user.createdBy)) : null,
+    createdBy: user.createdBy ? decorateUser((await accountStore.getUserById(user.createdBy)) || getUserById(user.createdBy)) : null,
   };
 }
 
-function updateUserAccount(id, payload, actor, req) {
-  const current = getUserById(id);
+async function updateUserAccount(id, payload, actor, req) {
+  const current = (await accountStore.getUserById(id)) || getUserById(id);
   if (!current || current.deletedAt || current.status === "deleted") {
     return null;
   }
@@ -470,7 +469,7 @@ function updateUserAccount(id, payload, actor, req) {
     if (!isValidEmail(email)) {
       throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR", { field: "email" });
     }
-    const existing = getUserByEmail(email);
+    const existing = (await accountStore.getUserByEmail(email)) || getUserByEmail(email);
     if (existing && existing.id !== id) {
       throw createHttpError(409, "A user with this email already exists.", "EMAIL_ALREADY_EXISTS");
     }
@@ -505,7 +504,7 @@ function updateUserAccount(id, payload, actor, req) {
 
   updates.updatedBy = actor?.id || null;
   const oldValue = decorateUser(current);
-  const updated = updateUser(id, updates);
+  const updated = await accountStore.updateUser(id, updates);
   const newValue = decorateUser(updated);
 
   if (updates.role || updates.roleId) {
@@ -534,8 +533,8 @@ function updateUserAccount(id, payload, actor, req) {
   return { oldValue, user: newValue };
 }
 
-function setAccountStatus(id, status, actor, req, options = {}) {
-  const current = getUserById(id);
+async function setAccountStatus(id, status, actor, req, options = {}) {
+  const current = (await accountStore.getUserById(id)) || getUserById(id);
   if (!current || current.deletedAt || current.status === "deleted") {
     return null;
   }
@@ -561,7 +560,7 @@ function setAccountStatus(id, status, actor, req, options = {}) {
   }
 
   const oldValue = decorateUser(current);
-  const updated = updateUser(id, updates);
+  const updated = await accountStore.updateUser(id, updates);
   if (["locked", "inactive", "suspended"].includes(status)) {
     revokeUserSessions(id, actor?.id);
   }
@@ -580,8 +579,8 @@ function setAccountStatus(id, status, actor, req, options = {}) {
   return { oldValue, user: newValue };
 }
 
-function resetUserPassword(id, payload, actor, req) {
-  const current = getUserById(id);
+async function resetUserPassword(id, payload, actor, req) {
+  const current = (await accountStore.getUserById(id)) || getUserById(id);
   if (!current || current.deletedAt || current.status === "deleted") {
     return null;
   }
@@ -594,8 +593,8 @@ function resetUserPassword(id, payload, actor, req) {
 
   const oldValue = decorateUser(current);
   securityService.recordPasswordHistory(current);
-  let updated = updateUserPassword(id, hashPassword(temporaryPassword));
-  updated = updateUser(id, {
+  await accountStore.updateUserPassword(id, hashPassword(temporaryPassword));
+  const updated = await accountStore.updateUser(id, {
     mustChangePassword: true,
     forcePasswordReset: true,
     updatedBy: actor?.id || null,
@@ -631,14 +630,14 @@ function resetUserPassword(id, payload, actor, req) {
   };
 }
 
-function forcePasswordChange(id, actor, req) {
-  const current = getUserById(id);
+async function forcePasswordChange(id, actor, req) {
+  const current = (await accountStore.getUserById(id)) || getUserById(id);
   if (!current) {
     return null;
   }
   ensureCanManageUser(actor, current, "force-password-change");
   const oldValue = decorateUser(current);
-  const updated = updateUser(id, { mustChangePassword: true, forcePasswordReset: true, updatedBy: actor?.id || null });
+  const updated = await accountStore.updateUser(id, { mustChangePassword: true, forcePasswordReset: true, updatedBy: actor?.id || null });
   const newValue = decorateUser(updated);
   writeUserAccessActivity({ actor, action: "FORCE_PASSWORD_CHANGE", targetUser: newValue, oldValue, newValue, req });
   return { oldValue, user: newValue };
@@ -681,8 +680,8 @@ function revokeAllUserSessions(id, actor, req) {
   return revoked;
 }
 
-function getUserStatistics() {
-  const users = listUsers().filter((user) => user.status !== "deleted" && !user.deletedAt);
+async function getUserStatistics() {
+  const users = (await accountStore.listUsers()).filter((user) => user.status !== "deleted" && !user.deletedAt);
   const loginHistory = readCollection("login_history");
   const failedLogins = readCollection("failed_logins");
   return {

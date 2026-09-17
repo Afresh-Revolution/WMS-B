@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const { createApp } = require("./app");
 const { ensureSuperadminFromEnv } = require("./auth/bootstrap");
+const { syncAllUsersToSupabase } = require("./auth/accountStore");
 const { assertRuntimeConfig, getRuntimeConfig } = require("./config");
 const { startBackgroundWorkers, stopBackgroundWorkers } = require("./workers");
 
@@ -10,6 +11,7 @@ assertRuntimeConfig();
 let server;
 
 async function start() {
+  await syncAllUsersToSupabase();
   await ensureSuperadminFromEnv();
 
   const app = createApp();

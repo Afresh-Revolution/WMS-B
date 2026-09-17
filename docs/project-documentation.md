@@ -101,9 +101,11 @@ This fixes the Render restart problem where local JSON data disappears. On deplo
 
 - The backend checks Supabase for an existing Super Admin.
 - If none exists, it can create one from environment variables.
-- Super Admin-created login accounts, including HOD and NYSC/Intern users, are created in Supabase when `DATABASE_URL` is configured.
+- Every login account is written to the Supabase `users` table and a matching `user_profiles` row.
+- Super Admin-created people, HOD, HR, NYSC/Intern, and platform users are stored in Supabase when `DATABASE_URL` is configured.
+- Existing local `users.json` records are synced into Supabase on boot.
 - Login reads the user from Supabase, not temporary Render disk.
-- Local JSON still works as a fallback for development and tests.
+- Local JSON still works as a fallback for development and tests, and is mirrored from Supabase so dropdowns keep working.
 
 Important files:
 

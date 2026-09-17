@@ -81,6 +81,7 @@ test("manages department dashboard, HOD assignment, relations, and deactivation 
   });
   assert.equal(createEmployeeResponse.status, 201);
   const employee = await createEmployeeResponse.json();
+  assert.ok(employee.data.userId);
 
   const listResponse = await fetch(`${baseUrl}/api/v1/departments?filter=no_hod`, { headers });
   assert.equal(listResponse.status, 200);

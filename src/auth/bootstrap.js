@@ -1,19 +1,14 @@
 const { hashPassword } = require("./passwords");
+const accountStore = require("./accountStore");
 const localUserStore = require("./userStore");
-const postgresUserStore = require("./postgresUserStore");
-
-function getStore() {
-  return postgresUserStore.isEnabled() ? postgresUserStore : localUserStore;
-}
 
 async function ensureSuperadminFromEnv({ logger = console } = {}) {
   const email = process.env.SUPERADMIN_EMAIL;
   const password = process.env.SUPERADMIN_PASSWORD;
   const name = process.env.SUPERADMIN_NAME || "Main Admin";
-  const store = getStore();
 
-  if (await store.hasSuperadmin()) {
-    const existingUser = email ? await store.getUserByEmail(email) : null;
+  if (await accountStore.hasSuperadmin()) {
+    const existingUser = email ? await accountStore.getUserByEmail(email) : null;
     return {
       created: false,
       reason: "already_exists",
@@ -30,7 +25,7 @@ async function ensureSuperadminFromEnv({ logger = console } = {}) {
     };
   }
 
-  const user = await store.createSuperadmin({
+  const user = await accountStore.createSuperadmin({
     name,
     email,
     passwordHash: hashPassword(password),

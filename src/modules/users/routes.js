@@ -49,19 +49,23 @@ function sendResult(res, result, message) {
   return res.json({ success: true, message, data: result.user || result, meta: {} });
 }
 
+function handle(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
 usersRouter.use(authenticate);
 
-usersRouter.get("/statistics", authorize("users.view"), (req, res) => {
+usersRouter.get("/statistics", authorize("users.view"), async (req, res) => {
   return res.json({
     success: true,
     message: "User access statistics loaded.",
-    data: getUserStatistics(),
+    data: await getUserStatistics(),
     meta: {},
   });
 });
 
-usersRouter.get("/", authorize("users.view"), (req, res) => {
-  const result = listUserAccounts(req.query);
+usersRouter.get("/", authorize("users.view"), async (req, res) => {
+  const result = await listUserAccounts(req.query);
   return res.json({
     success: true,
     message: "Users loaded.",
@@ -92,39 +96,39 @@ usersRouter.post("/", authorize("users.create"), async (req, res, next) => {
   }
 });
 
-usersRouter.get("/:id", authorize("users.view"), (req, res) => {
-  const detail = getUserAccountDetail(req.params.id);
+usersRouter.get("/:id", authorize("users.view"), handle(async (req, res) => {
+  const detail = await getUserAccountDetail(req.params.id);
   if (!detail) {
     return notFound(res);
   }
 
   return res.json({ success: true, message: "User detail loaded.", data: detail, meta: {} });
-});
+}));
 
-usersRouter.patch("/:id", authorize("users.update"), (req, res) => {
-  return sendResult(res, updateUserAccount(req.params.id, req.body || {}, req.user, req), "User updated.");
-});
+usersRouter.patch("/:id", authorize("users.update"), handle(async (req, res) => {
+  return sendResult(res, await updateUserAccount(req.params.id, req.body || {}, req.user, req), "User updated.");
+}));
 
-usersRouter.put("/:id", authorize("users.update"), (req, res) => {
-  return sendResult(res, updateUserAccount(req.params.id, req.body || {}, req.user, req), "User updated.");
-});
+usersRouter.put("/:id", authorize("users.update"), handle(async (req, res) => {
+  return sendResult(res, await updateUserAccount(req.params.id, req.body || {}, req.user, req), "User updated.");
+}));
 
-usersRouter.delete("/:id", authorize("users.delete"), (req, res) => {
+usersRouter.delete("/:id", authorize("users.delete"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "inactive", req.user, req, {
+    await setAccountStatus(req.params.id, "inactive", req.user, req, {
       action: "delete",
       auditAction: "USER_DEACTIVATED",
       reason: "Soft deleted through User Access.",
     }),
     "User deactivated."
   );
-});
+}));
 
-usersRouter.post("/:id/lock", authorize("users.lock"), (req, res) => {
+usersRouter.post("/:id/lock", authorize("users.lock"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "locked", req.user, req, {
+    await setAccountStatus(req.params.id, "locked", req.user, req, {
       action: "lock",
       auditAction: "USER_LOCKED",
       reason: req.body?.reason || "Account locked by administrator.",
@@ -132,58 +136,58 @@ usersRouter.post("/:id/lock", authorize("users.lock"), (req, res) => {
     }),
     "User locked."
   );
-});
+}));
 
-usersRouter.post("/:id/unlock", authorize("users.unlock"), (req, res) => {
+usersRouter.post("/:id/unlock", authorize("users.unlock"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "active", req.user, req, {
+    await setAccountStatus(req.params.id, "active", req.user, req, {
       action: "unlock",
       auditAction: "USER_UNLOCKED",
       reason: req.body?.reason || "Account unlocked by administrator.",
     }),
     "User unlocked."
   );
-});
+}));
 
-usersRouter.post("/:id/deactivate", authorize("users.update"), (req, res) => {
+usersRouter.post("/:id/deactivate", authorize("users.update"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "inactive", req.user, req, {
+    await setAccountStatus(req.params.id, "inactive", req.user, req, {
       action: "deactivate",
       auditAction: "USER_DEACTIVATED",
       reason: req.body?.reason || "Account deactivated by administrator.",
     }),
     "User deactivated."
   );
-});
+}));
 
-usersRouter.post("/:id/reactivate", authorize("users.update"), (req, res) => {
+usersRouter.post("/:id/reactivate", authorize("users.update"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "active", req.user, req, {
+    await setAccountStatus(req.params.id, "active", req.user, req, {
       action: "reactivate",
       auditAction: "USER_REACTIVATED",
       reason: req.body?.reason || "Account reactivated by administrator.",
     }),
     "User reactivated."
   );
-});
+}));
 
-usersRouter.post("/:id/suspend", authorize("users.update"), (req, res) => {
+usersRouter.post("/:id/suspend", authorize("users.update"), handle(async (req, res) => {
   return sendResult(
     res,
-    setAccountStatus(req.params.id, "suspended", req.user, req, {
+    await setAccountStatus(req.params.id, "suspended", req.user, req, {
       action: "suspend",
       auditAction: "USER_SUSPENDED",
       reason: req.body?.reason || "Account suspended by administrator.",
     }),
     "User suspended."
   );
-});
+}));
 
-usersRouter.post("/:id/reset-password", authorize("users.update"), (req, res) => {
-  const result = resetUserPassword(req.params.id, req.body || {}, req.user, req);
+usersRouter.post("/:id/reset-password", authorize("users.update"), handle(async (req, res) => {
+  const result = await resetUserPassword(req.params.id, req.body || {}, req.user, req);
   if (!result) {
     return notFound(res);
   }
@@ -194,11 +198,11 @@ usersRouter.post("/:id/reset-password", authorize("users.update"), (req, res) =>
     data: result.user,
     meta: { provisioning: result.provisioning },
   });
-});
+}));
 
-usersRouter.post("/:id/force-password-change", authorize("users.update"), (req, res) => {
-  return sendResult(res, forcePasswordChange(req.params.id, req.user, req), "Password change required.");
-});
+usersRouter.post("/:id/force-password-change", authorize("users.update"), handle(async (req, res) => {
+  return sendResult(res, await forcePasswordChange(req.params.id, req.user, req), "Password change required.");
+}));
 
 usersRouter.post("/:id/revoke-sessions", authorize("users.update"), (req, res) => {
   const result = revokeAllUserSessions(req.params.id, req.user, req);

@@ -16,8 +16,8 @@ function meetingTypeOptions() {
   }));
 }
 
-function withPeople(lookups) {
-  const employees = listHodOptions();
+async function withPeople(lookups) {
+  const employees = await listHodOptions();
   return {
     ...lookups,
     employees,
@@ -28,11 +28,11 @@ function withPeople(lookups) {
 
 lookupsRouter.use(authenticate);
 
-lookupsRouter.get("/", (_req, res) => {
+lookupsRouter.get("/", async (_req, res) => {
   return res.json({
     success: true,
     message: "Lookups loaded.",
-    data: withPeople(getLookups()),
+    data: await withPeople(getLookups()),
     meta: {},
   });
 });
@@ -55,20 +55,20 @@ lookupsRouter.get("/employment-types", (_req, res) => {
   });
 });
 
-lookupsRouter.get("/employees", (_req, res) => {
+lookupsRouter.get("/employees", async (_req, res) => {
   return res.json({
     success: true,
     message: "Employees loaded.",
-    data: listHodOptions(),
+    data: await listHodOptions(),
     meta: {},
   });
 });
 
-lookupsRouter.get("/hods", (_req, res) => {
+lookupsRouter.get("/hods", async (_req, res) => {
   return res.json({
     success: true,
     message: "HOD options loaded.",
-    data: listHodOptions(),
+    data: await listHodOptions(),
     meta: {},
   });
 });

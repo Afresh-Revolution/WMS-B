@@ -66,6 +66,7 @@ test("super admin can list and add people through POST /api/v1/employees", async
   assert.equal(created.success, true);
   assert.equal(created.data.fullName, "Lena Fisher");
   assert.equal(created.data.email, "lena.f@afresh.com");
+  assert.ok(created.data.userId);
   assert.equal(created.data.jobPosition, "Hardware Lead");
   assert.equal(created.data.department, "Hardware");
   assert.ok(created.meta.temporaryPassword);

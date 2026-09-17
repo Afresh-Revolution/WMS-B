@@ -15,56 +15,73 @@ async function ensureSchema() {
     return true;
   }
   if (!schemaPromise) {
-    schemaPromise = query(`
-      create extension if not exists "pgcrypto";
+    schemaPromise = (async () => {
+      await query(`
+        create extension if not exists "pgcrypto";
 
-      create table if not exists users (
-        id uuid primary key default gen_random_uuid(),
-        employee_id uuid,
-        full_name text,
-        email text not null unique,
-        username text unique,
-        phone text,
-        password_hash text not null,
-        role text not null default 'employee',
-        role_id uuid,
-        department_id uuid,
-        account_type text not null default 'STAFF',
-        status text not null default 'active',
-        permissions jsonb not null default '[]'::jsonb,
-        email_verified boolean not null default false,
-        phone_verified boolean not null default false,
-        must_change_password boolean not null default false,
-        failed_login_count integer not null default 0,
-        failed_login_attempts integer not null default 0,
-        force_password_reset boolean not null default false,
-        locked_until timestamptz,
-        last_login_at timestamptz,
-        last_login_ip inet,
-        last_activity_at timestamptz,
-        password_changed_at timestamptz,
-        password_expires_at timestamptz,
-        locked_at timestamptz,
-        created_by uuid,
-        updated_by uuid,
-        deactivated_at timestamptz,
-        deactivated_by uuid,
-        activation_token_hash text,
-        activation_token_expires_at timestamptz,
-        deleted_at timestamptz,
-        deleted_by uuid,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now()
-      );
-    `)
-      .then(() => {
-        schemaReady = true;
-        return true;
-      })
-      .catch((error) => {
-        schemaPromise = null;
-        throw error;
-      });
+        create table if not exists users (
+          id uuid primary key default gen_random_uuid(),
+          employee_id uuid,
+          full_name text,
+          email text not null unique,
+          username text unique,
+          phone text,
+          password_hash text not null,
+          role text not null default 'employee',
+          role_id uuid,
+          department_id uuid,
+          account_type text not null default 'STAFF',
+          status text not null default 'active',
+          permissions jsonb not null default '[]'::jsonb,
+          email_verified boolean not null default false,
+          phone_verified boolean not null default false,
+          must_change_password boolean not null default false,
+          failed_login_count integer not null default 0,
+          failed_login_attempts integer not null default 0,
+          force_password_reset boolean not null default false,
+          locked_until timestamptz,
+          last_login_at timestamptz,
+          last_login_ip inet,
+          last_activity_at timestamptz,
+          password_changed_at timestamptz,
+          password_expires_at timestamptz,
+          locked_at timestamptz,
+          created_by uuid,
+          updated_by uuid,
+          deactivated_at timestamptz,
+          deactivated_by uuid,
+          activation_token_hash text,
+          activation_token_expires_at timestamptz,
+          deleted_at timestamptz,
+          deleted_by uuid,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        );
+      `);
+      await query(`alter table users add column if not exists job_title text`);
+      await query(`alter table users add column if not exists avatar_url text`);
+      await query(`alter table users add column if not exists department text`);
+      await query(`alter table users add column if not exists employee_number text`);
+      await query(`alter table users add column if not exists organization_id uuid`);
+      await query(`
+        create table if not exists user_profiles (
+          id uuid primary key default gen_random_uuid(),
+          user_id uuid not null references users(id),
+          full_name text not null,
+          phone text,
+          photo_file_id uuid,
+          notification_preferences jsonb not null default '{}'::jsonb,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        );
+      `);
+      await query(`create unique index if not exists idx_user_profiles_user_id on user_profiles(user_id)`);
+      schemaReady = true;
+      return true;
+    })().catch((error) => {
+      schemaPromise = null;
+      throw error;
+    });
   }
   return schemaPromise;
 }
@@ -107,12 +124,17 @@ function mapUser(row) {
     name: fullName,
     fullName,
     email: row.email,
+    username: row.username || null,
     phone: row.phone || null,
     passwordHash: row.password_hash,
     role: row.role,
     roleId: row.role_id || row.role,
     departmentId: row.department_id || null,
-    employeeId: row.employee_id || null,
+    department: row.department || null,
+    employeeId: row.employee_id || row.employee_number || null,
+    employeeNumber: row.employee_number || null,
+    jobTitle: row.job_title || null,
+    avatarUrl: row.avatar_url || null,
     accountType: row.account_type || (row.role === "superadmin" ? "SUPER_ADMIN" : "STAFF"),
     status: row.status || "active",
     permissions: parseJsonArray(row.permissions),
@@ -193,13 +215,56 @@ async function createSuperadmin({ name, email, passwordHash }) {
      returning *`,
     [String(name || "Main Admin").trim(), normalizedEmail, passwordHash]
   );
-  return mapUser(result.rows[0]);
+  const user = mapUser(result.rows[0]);
+  await ensureUserProfile(user);
+  return user;
+}
+
+function usernameFromEmail(email) {
+  const localPart = String(email || "")
+    .split("@")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 40);
+  return localPart || null;
+}
+
+async function ensureUserProfile(user) {
+  if (!user?.id) {
+    return;
+  }
+  const existing = await query(`select id from user_profiles where user_id = $1 limit 1`, [user.id]);
+  if (existing.rows[0]) {
+    await query(
+      `update user_profiles
+       set full_name = $2,
+           phone = coalesce($3, phone),
+           updated_at = now()
+       where user_id = $1`,
+      [user.id, user.fullName || user.name || user.email, user.phone || null]
+    );
+    return;
+  }
+  await query(`insert into user_profiles (user_id, full_name, phone) values ($1, $2, $3)`, [
+    user.id,
+    user.fullName || user.name || user.email,
+    user.phone || null,
+  ]);
+}
+
+async function listUsers() {
+  await ensureSchema();
+  const result = await query(`select * from users where deleted_at is null order by created_at asc`);
+  return result.rows.map(mapUser);
 }
 
 async function createUser({
+  id,
   name,
   fullName,
   email,
+  username,
   phone,
   passwordHash,
   role = "employee",
@@ -207,8 +272,10 @@ async function createUser({
   permissions = [],
   status = "active",
   accountType,
+  department,
   departmentId,
   employeeId,
+  jobTitle,
   createdBy,
   mustChangePassword = false,
   activationTokenHash,
@@ -228,36 +295,95 @@ async function createUser({
     throw error;
   }
 
-  const result = await query(
-    `insert into users
-      (full_name, email, phone, password_hash, role, role_id, department_id, employee_id,
-       account_type, status, permissions, email_verified, phone_verified,
-       must_change_password, force_password_reset, failed_login_count,
-       failed_login_attempts, password_changed_at, created_by,
-       activation_token_hash, activation_token_expires_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8,
-       $9, $10, $11::jsonb, false, false,
-       $12, $12, 0, 0, now(), $13, $14, $15)
-     returning *`,
-    [
-      String(fullName || name || "").trim(),
-      normalizedEmail,
-      phone || null,
-      passwordHash,
-      role,
-      nullableUuid(roleId),
-      nullableUuid(departmentId),
-      nullableUuid(employeeId),
-      accountType || (role === "superadmin" ? "SUPER_ADMIN" : role === "admin" ? "ADMIN" : "STAFF"),
-      status,
-      JSON.stringify(Array.isArray(permissions) ? permissions : []),
-      Boolean(mustChangePassword),
-      nullableUuid(createdBy),
-      activationTokenHash || null,
-      activationTokenExpiresAt || null,
-    ]
-  );
-  return mapUser(result.rows[0]);
+  const employeeUuid = nullableUuid(employeeId);
+  const employeeNumber = employeeUuid ? null : employeeId ? String(employeeId) : null;
+  const userId = isUuid(id) ? id : null;
+  const generatedUsername = username || usernameFromEmail(normalizedEmail);
+  const columns = [
+    userId ? "id" : null,
+    "full_name",
+    "email",
+    "username",
+    "phone",
+    "password_hash",
+    "role",
+    "role_id",
+    "department_id",
+    "department",
+    "employee_id",
+    "employee_number",
+    "job_title",
+    "account_type",
+    "status",
+    "permissions",
+    "email_verified",
+    "phone_verified",
+    "must_change_password",
+    "force_password_reset",
+    "failed_login_count",
+    "failed_login_attempts",
+    "password_changed_at",
+    "created_by",
+    "activation_token_hash",
+    "activation_token_expires_at",
+  ].filter(Boolean);
+
+  const values = [
+    ...(userId ? [userId] : []),
+    String(fullName || name || "").trim(),
+    normalizedEmail,
+    generatedUsername,
+    phone || null,
+    passwordHash,
+    role,
+    nullableUuid(roleId),
+    nullableUuid(departmentId),
+    department || null,
+    employeeUuid,
+    employeeNumber,
+    jobTitle || null,
+    accountType || (role === "superadmin" ? "SUPER_ADMIN" : role === "admin" ? "ADMIN" : "STAFF"),
+    status,
+    JSON.stringify(Array.isArray(permissions) ? permissions : []),
+    false,
+    false,
+    Boolean(mustChangePassword),
+    Boolean(mustChangePassword),
+    0,
+    0,
+    new Date().toISOString(),
+    nullableUuid(createdBy),
+    activationTokenHash || null,
+    activationTokenExpiresAt || null,
+  ];
+  const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
+  const permissionPlaceholderIndex = columns.indexOf("permissions") + 1;
+
+  let result;
+  try {
+    result = await query(
+      `insert into users (${columns.join(", ")})
+       values (${placeholders.replace(`$${permissionPlaceholderIndex}`, `$${permissionPlaceholderIndex}::jsonb`)})
+       returning *`,
+      values
+    );
+  } catch (error) {
+    if (String(error.message || "").includes("users_username_key") && generatedUsername) {
+      values[columns.indexOf("username")] = `${generatedUsername}.${String(Date.now()).slice(-4)}`;
+      result = await query(
+        `insert into users (${columns.join(", ")})
+         values (${placeholders.replace(`$${permissionPlaceholderIndex}`, `$${permissionPlaceholderIndex}::jsonb`)})
+         returning *`,
+        values
+      );
+    } else {
+      throw error;
+    }
+  }
+
+  const user = mapUser(result.rows[0]);
+  await ensureUserProfile(user);
+  return user;
 }
 
 async function updateUser(id, payload = {}) {
@@ -284,11 +410,26 @@ async function updateUser(id, payload = {}) {
   if (payload.mustChangePassword !== undefined) set("must_change_password", Boolean(payload.mustChangePassword));
   if (payload.forcePasswordReset !== undefined) set("force_password_reset", Boolean(payload.forcePasswordReset));
   if (payload.name !== undefined || payload.fullName !== undefined) set("full_name", payload.fullName || payload.name || null);
+  if (payload.email !== undefined) set("email", normalizeEmail(payload.email));
   if (payload.phone !== undefined) set("phone", payload.phone || null);
-  if (payload.departmentId !== undefined) set("department_id", payload.departmentId || null);
+  if (payload.role !== undefined) set("role", payload.role);
+  if (payload.accountType !== undefined) set("account_type", payload.accountType);
+  if (payload.permissions !== undefined) {
+    values.push(JSON.stringify(Array.isArray(payload.permissions) ? payload.permissions : []));
+    fields.push(`permissions = $${values.length}::jsonb`);
+  }
+  if (payload.deactivatedAt !== undefined) set("deactivated_at", payload.deactivatedAt);
+  if (payload.deactivatedBy !== undefined) set("deactivated_by", nullableUuid(payload.deactivatedBy));
+  if (payload.departmentId !== undefined) set("department_id", nullableUuid(payload.departmentId));
+  if (payload.department !== undefined) set("department", payload.department || null);
+  if (payload.employeeId !== undefined) {
+    const employeeUuid = nullableUuid(payload.employeeId);
+    set("employee_id", employeeUuid);
+    if (!employeeUuid) set("employee_number", payload.employeeId || null);
+  }
   if (payload.jobTitle !== undefined || payload.job_title !== undefined) set("job_title", payload.jobTitle || payload.job_title || null);
   if (payload.avatarUrl !== undefined || payload.avatar_url !== undefined) set("avatar_url", payload.avatarUrl || payload.avatar_url || null);
-  if (payload.updatedBy !== undefined) set("updated_by", payload.updatedBy || null);
+  if (payload.updatedBy !== undefined) set("updated_by", nullableUuid(payload.updatedBy));
 
   if (!fields.length) {
     return getUserById(id);
@@ -299,7 +440,34 @@ async function updateUser(id, payload = {}) {
     `update users set ${fields.join(", ")}, updated_at = now() where id = $${values.length} returning *`,
     values
   );
-  return mapUser(result.rows[0]);
+  const user = mapUser(result.rows[0]);
+  if (user) {
+    await ensureUserProfile(user);
+  }
+  return user;
+}
+
+async function upsertUser(payload = {}) {
+  await ensureSchema();
+  const existing = payload.email ? await getUserByEmail(payload.email) : payload.id ? await getUserById(payload.id) : null;
+  if (existing) {
+    const updates = {
+      name: payload.fullName || payload.name || existing.name,
+      fullName: payload.fullName || payload.name || existing.fullName,
+      phone: payload.phone !== undefined ? payload.phone : existing.phone,
+      status: payload.status || existing.status,
+      department: payload.department,
+      departmentId: payload.departmentId,
+      employeeId: payload.employeeId,
+      jobTitle: payload.jobTitle,
+    };
+    const user = await updateUser(existing.id, updates);
+    if (payload.passwordHash && payload.passwordHash !== existing.passwordHash) {
+      return updateUserPassword(existing.id, payload.passwordHash);
+    }
+    return user;
+  }
+  return createUser(payload);
 }
 
 async function updateUserPassword(id, passwordHash) {
@@ -326,6 +494,8 @@ module.exports = {
   getUserById,
   hasSuperadmin,
   isEnabled,
+  listUsers,
   updateUser,
   updateUserPassword,
+  upsertUser,
 };

@@ -108,8 +108,8 @@ hrRouter.put("/employees/:id", handle((req, res) => {
   const result = hrService.updateEmployee(req.params.id, req.body || {}, req);
   return result ? send(res, "HR employee updated.", result.record) : notFound(res, "EMPLOYEE_NOT_FOUND");
 }));
-hrRouter.patch("/employees/:id/status", handle((req, res) => {
-  const result = hrService.patchEmployeeStatus(req.params.id, req.body || {}, req);
+hrRouter.patch("/employees/:id/status", handle(async (req, res) => {
+  const result = await hrService.patchEmployeeStatus(req.params.id, req.body || {}, req);
   return result ? send(res, "HR employee status updated.", result.record) : notFound(res, "EMPLOYEE_NOT_FOUND");
 }));
 
@@ -165,8 +165,8 @@ hrRouter.patch("/onboarding/tasks/:id", handle((req, res) => {
   return result ? send(res, "HR onboarding task updated.", result.record) : notFound(res, "ONBOARDING_TASK_NOT_FOUND");
 }));
 
-hrRouter.get("/departments", handle((req, res) => {
-  const result = hrService.listDepartments(req.query, req.user);
+hrRouter.get("/departments", handle(async (req, res) => {
+  const result = await hrService.listDepartments(req.query, req.user);
   return send(res, "HR departments loaded.", result.data, result.meta);
 }));
 hrRouter.post("/departments", handle((req, res) => res.status(201).json({ success: true, message: "HR department created.", data: hrService.createDepartment(req.body || {}, req), meta: {} })));

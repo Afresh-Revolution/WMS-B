@@ -13,6 +13,7 @@ const {
   softDeleteDepartment,
   updateDepartment,
 } = require("./departmentService");
+const { listHodOptions } = require("../employers/staffDirectoryService");
 
 const departmentsRouter = express.Router();
 
@@ -46,17 +47,16 @@ function auditDepartment(req, action, result) {
 
 departmentsRouter.use(authenticate, requireRole("superadmin"));
 
-departmentsRouter.get("/", (req, res) => {
-  const result = listDepartments(req.query);
+departmentsRouter.get("/", async (req, res) => {
+  const result = await listDepartments(req.query);
   return res.json({ success: true, message: "Departments loaded.", data: result.data, meta: result.meta });
 });
 
-departmentsRouter.get("/hod-options", (_req, res) => {
-  const { listHodOptions } = require("../employers/staffDirectoryService");
+departmentsRouter.get("/hod-options", async (_req, res) => {
   return res.json({
     success: true,
     message: "HOD options loaded.",
-    data: listHodOptions(),
+    data: await listHodOptions(),
     meta: {},
   });
 });

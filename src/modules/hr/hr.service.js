@@ -1164,15 +1164,15 @@ function updateEmployee(id, payload, req) {
   return result;
 }
 
-function patchEmployeeStatus(id, payload, req) {
+async function patchEmployeeStatus(id, payload, req) {
   assertHrAccess(req.user, "employees.update");
   const action = String(payload.status || "").toLowerCase() === "active" ? "activate" : String(payload.status || "inactive").toLowerCase() === "suspended" ? "suspend" : "deactivate";
-  const result = staffService.performStaffAction(id, action, payload, req.user, req);
+  const result = await staffService.performStaffAction(id, action, payload, req.user, req);
   if (result) audit(req, "Employee Status Changed", "Employee", id, result.oldValue, result.record);
   return result;
 }
 
-function listDepartments(query, user) {
+async function listDepartments(query, user) {
   assertHrAccess(user, "departments.view");
   if (getOrganizationId(user)) {
     return listCollection("departments", query, user, ["name", "code", "description", "status"]);

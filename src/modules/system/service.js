@@ -1,7 +1,8 @@
 const crypto = require("crypto");
 const { hashPassword } = require("../../auth/passwords");
 const { listSessions, revokeSession, revokeUserSessions } = require("../../auth/sessionStore");
-const { createUser, listUsers, sanitizeUser, updateUser, updateUserPassword } = require("../../auth/userStore");
+const accountStore = require("../../auth/accountStore");
+const { listUsers, sanitizeUser } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { applyBasicFilters, paginate } = require("../../utils/query");
 const { recordTechnicalAuditEvent, redactSensitiveData } = require("../_shared/auditService");
@@ -164,11 +165,11 @@ function listPlatformUsers(query = {}) {
   return paginate(applyBasicFilters(listUsers(), query, ["name", "email", "role", "status"]), query);
 }
 
-function createPlatformUser(payload, req) {
+async function createPlatformUser(payload, req) {
   if (!payload.name || !payload.email || !payload.password) {
     throw createHttpError(400, "User name, email, and password are required.", "INVALID_USER_PAYLOAD");
   }
-  const user = createUser({
+  const user = await accountStore.createUser({
     name: String(payload.name).trim(),
     email: String(payload.email).trim(),
     passwordHash: hashPassword(payload.password),
@@ -185,23 +186,23 @@ function createPlatformUser(payload, req) {
   return sanitized;
 }
 
-function updatePlatformUser(id, payload, req) {
-  const oldValue = listUsers().find((user) => user.id === id);
+async function updatePlatformUser(id, payload, req) {
+  const oldValue = (await accountStore.getUserById(id)) || listUsers().find((user) => user.id === id);
   const { password, ...updates } = payload || {};
-  const user = updateUser(id, updates);
+  const user = await accountStore.updateUser(id, updates);
   if (!user) return null;
   if (typeof password === "string" && password.length >= 8) {
-    updateUserPassword(id, hashPassword(password));
+    await accountStore.updateUserPassword(id, hashPassword(password));
   }
-  const sanitized = sanitizeUser(updateUser(id, {}));
+  const sanitized = sanitizeUser(await accountStore.getUserById(id));
   audit(req, "USER_UPDATED", "User", id, oldValue, sanitized, "Updated platform user.");
   return sanitized;
 }
 
-function setUserStatus(id, status, req) {
-  const oldValue = listUsers().find((user) => user.id === id);
+async function setUserStatus(id, status, req) {
+  const oldValue = (await accountStore.getUserById(id)) || listUsers().find((user) => user.id === id);
   const payload = status === "locked" ? { status, lockedAt: now() } : { status, lockedAt: null };
-  const user = updateUser(id, payload);
+  const user = await accountStore.updateUser(id, payload);
   if (!user) return null;
   if (["locked", "suspended", "inactive"].includes(status)) revokeUserSessions(id, req.user.id);
   const sanitized = sanitizeUser(user);
@@ -209,12 +210,12 @@ function setUserStatus(id, status, req) {
   return sanitized;
 }
 
-function resetPassword(id, password, req) {
+async function resetPassword(id, password, req) {
   if (!password || password.length < 8) {
     throw createHttpError(400, "Password must be at least 8 characters.", "INVALID_PASSWORD");
   }
-  const oldValue = listUsers().find((user) => user.id === id);
-  const user = updateUserPassword(id, hashPassword(password));
+  const oldValue = (await accountStore.getUserById(id)) || listUsers().find((user) => user.id === id);
+  const user = await accountStore.updateUserPassword(id, hashPassword(password));
   if (!user) return null;
   revokeUserSessions(id, req.user.id);
   const sanitized = sanitizeUser(user);

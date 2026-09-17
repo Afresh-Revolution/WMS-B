@@ -95,8 +95,8 @@ employersRouter.post("/import", async (req, res) => {
   });
 });
 
-employersRouter.post("/bulk", (req, res) => {
-  const result = bulkAction(req.body || {}, req.user, req);
+employersRouter.post("/bulk", async (req, res) => {
+  const result = await bulkAction(req.body || {}, req.user, req);
   recordOperationalAudit({
     user: req.user,
     action: `Bulk Staff ${req.body?.action || "Action"}`,
@@ -139,8 +139,8 @@ employersRouter.patch("/:id", (req, res) => {
 });
 
 for (const action of ["deactivate", "activate", "suspend"]) {
-  employersRouter.post(`/:id/${action}`, (req, res) => {
-    const result = performStaffAction(req.params.id, action, req.body || {}, req.user, req);
+  employersRouter.post(`/:id/${action}`, async (req, res) => {
+    const result = await performStaffAction(req.params.id, action, req.body || {}, req.user, req);
     if (result) {
       recordOperationalAudit({
         user: req.user,
@@ -157,7 +157,7 @@ for (const action of ["deactivate", "activate", "suspend"]) {
   });
 }
 
-employersRouter.post("/:id/terminate", (req, res) => {
+employersRouter.post("/:id/terminate", async (req, res) => {
   if (!requireConfirmation(req, "TERMINATE STAFF")) {
     return res.status(400).json({
       success: false,
@@ -166,7 +166,7 @@ employersRouter.post("/:id/terminate", (req, res) => {
     });
   }
 
-  const result = performStaffAction(req.params.id, "terminate", req.body || {}, req.user, req);
+  const result = await performStaffAction(req.params.id, "terminate", req.body || {}, req.user, req);
   if (result) {
     recordOperationalAudit({
       user: req.user,
@@ -189,8 +189,8 @@ for (const [path, action] of [
   ["manager", "manager"],
   ["role", "role"],
 ]) {
-  employersRouter.post(`/:id/${path}`, (req, res) => {
-    const result = performStaffAction(req.params.id, action, req.body || {}, req.user, req);
+  employersRouter.post(`/:id/${path}`, async (req, res) => {
+    const result = await performStaffAction(req.params.id, action, req.body || {}, req.user, req);
     if (result) {
       recordOperationalAudit({
         user: req.user,
@@ -207,7 +207,7 @@ for (const [path, action] of [
   });
 }
 
-employersRouter.post("/:id/reset-password", (req, res) => {
+employersRouter.post("/:id/reset-password", async (req, res) => {
   const { password } = req.body || {};
   if (typeof password !== "string" || password.length < 8) {
     return res.status(400).json({
@@ -217,7 +217,7 @@ employersRouter.post("/:id/reset-password", (req, res) => {
     });
   }
 
-  const user = resetStaffPassword(req.params.id, password, req.user, req);
+  const user = await resetStaffPassword(req.params.id, password, req.user, req);
   recordOperationalAudit({
     user: req.user,
     action: "Reset Staff Password",

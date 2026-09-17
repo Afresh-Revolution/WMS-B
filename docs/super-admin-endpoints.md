@@ -383,6 +383,8 @@ Add-person body can be a nested staff payload or a flat form:
 
 If `email` is omitted, the backend generates a login email. A temporary password is always created and returned in `meta.temporaryPassword`. The new user **must change that password on first login** (`mustChangePassword: true`). Until they POST `/api/v1/auth/change-password`, other APIs return `403 PASSWORD_CHANGE_REQUIRED`.
 
+When `DATABASE_URL` is set, that login is stored in the Supabase `users` table (and `user_profiles`). Do not keep a separate frontend-only user list.
+
 Dropdown values for Add person / employment forms:
 
 | Method | Endpoint | Purpose |

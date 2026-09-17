@@ -4,6 +4,10 @@ const crypto = require("crypto");
 
 const DEFAULT_DATA_DIR = path.join(process.cwd(), "data");
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
 function getDataFilePath() {
   const dataDir = process.env.DATA_DIR
     ? path.resolve(process.cwd(), process.env.DATA_DIR)
@@ -85,6 +89,10 @@ function listUsers() {
   return readUsers().map(sanitizeUser);
 }
 
+function listRawUsers() {
+  return readUsers().filter((user) => user.status !== "deleted" && !user.deletedAt);
+}
+
 function getUserByEmail(email) {
   const normalizedEmail = email.toLowerCase();
   return readUsers().find((user) => user.email === normalizedEmail) || null;
@@ -147,6 +155,7 @@ function createSuperadmin({ name, email, passwordHash }) {
 }
 
 function createUser({
+  id,
   name,
   fullName,
   email,
@@ -157,8 +166,10 @@ function createUser({
   permissions = [],
   status = "active",
   accountType,
+  department,
   departmentId,
   employeeId,
+  jobTitle,
   organizationId,
   employerId,
   createdBy,
@@ -178,7 +189,7 @@ function createUser({
 
   const now = new Date().toISOString();
   const user = {
-    id: crypto.randomUUID(),
+    id: isUuid(id) ? id : crypto.randomUUID(),
     name: name || fullName,
     fullName: fullName || name,
     email: normalizedEmail,
@@ -186,8 +197,10 @@ function createUser({
     passwordHash,
     role,
     roleId: roleId || role,
+    department: department || null,
     departmentId: departmentId || null,
     employeeId: employeeId || null,
+    jobTitle: jobTitle || null,
     organizationId: organizationId || null,
     organization_id: organizationId || null,
     employerId: employerId || null,
@@ -266,6 +279,7 @@ module.exports = {
   getUserByEmail,
   getUserById,
   hasSuperadmin,
+  listRawUsers,
   listUsers,
   sanitizeUser,
   updateUser,

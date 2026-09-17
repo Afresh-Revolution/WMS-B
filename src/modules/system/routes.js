@@ -5,13 +5,7 @@ const systemService = require("./service");
 const systemRouter = express.Router();
 
 function handle(handler) {
-  return (req, res, next) => {
-    try {
-      return handler(req, res, next);
-    } catch (error) {
-      return next(error);
-    }
-  };
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
 function send(res, message, data, meta = {}) {
@@ -55,33 +49,33 @@ systemRouter.get("/users", handle((req, res) => {
   const result = systemService.listPlatformUsers(req.query);
   return send(res, "Platform users loaded.", result.data, result.meta);
 }));
-systemRouter.post("/users", handle((req, res) => res.status(201).json({ success: true, message: "Platform user created.", data: systemService.createPlatformUser(req.body || {}, req), meta: {} })));
-systemRouter.patch("/users/:id", handle((req, res) => {
-  const user = systemService.updatePlatformUser(req.params.id, req.body || {}, req);
+systemRouter.post("/users", handle(async (req, res) => res.status(201).json({ success: true, message: "Platform user created.", data: await systemService.createPlatformUser(req.body || {}, req), meta: {} })));
+systemRouter.patch("/users/:id", handle(async (req, res) => {
+  const user = await systemService.updatePlatformUser(req.params.id, req.body || {}, req);
   return user ? send(res, "Platform user updated.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/activate", handle((req, res) => {
-  const user = systemService.setUserStatus(req.params.id, "active", req);
+systemRouter.post("/users/:id/activate", handle(async (req, res) => {
+  const user = await systemService.setUserStatus(req.params.id, "active", req);
   return user ? send(res, "User activated.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/deactivate", handle((req, res) => {
-  const user = systemService.setUserStatus(req.params.id, "inactive", req);
+systemRouter.post("/users/:id/deactivate", handle(async (req, res) => {
+  const user = await systemService.setUserStatus(req.params.id, "inactive", req);
   return user ? send(res, "User deactivated.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/suspend", handle((req, res) => {
-  const user = systemService.setUserStatus(req.params.id, "suspended", req);
+systemRouter.post("/users/:id/suspend", handle(async (req, res) => {
+  const user = await systemService.setUserStatus(req.params.id, "suspended", req);
   return user ? send(res, "User suspended.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/lock", handle((req, res) => {
-  const user = systemService.setUserStatus(req.params.id, "locked", req);
+systemRouter.post("/users/:id/lock", handle(async (req, res) => {
+  const user = await systemService.setUserStatus(req.params.id, "locked", req);
   return user ? send(res, "User locked.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/unlock", handle((req, res) => {
-  const user = systemService.setUserStatus(req.params.id, "active", req);
+systemRouter.post("/users/:id/unlock", handle(async (req, res) => {
+  const user = await systemService.setUserStatus(req.params.id, "active", req);
   return user ? send(res, "User unlocked.", user) : notFound(res, "USER_NOT_FOUND");
 }));
-systemRouter.post("/users/:id/reset-password", handle((req, res) => {
-  const user = systemService.resetPassword(req.params.id, req.body?.password, req);
+systemRouter.post("/users/:id/reset-password", handle(async (req, res) => {
+  const user = await systemService.resetPassword(req.params.id, req.body?.password, req);
   return user ? send(res, "User password reset.", user) : notFound(res, "USER_NOT_FOUND");
 }));
 systemRouter.post("/users/:id/revoke-sessions", handle((req, res) => send(res, "User sessions revoked.", systemService.revokeSessionsForUser(req.params.id, req))));

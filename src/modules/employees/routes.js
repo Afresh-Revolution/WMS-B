@@ -102,8 +102,8 @@ employeesRouter.get("/", authenticate, requireRole("superadmin"), (req, res) => 
   return send(res, "Employees loaded.", result.data, result.meta);
 });
 
-employeesRouter.get("/options", authenticate, requireRole("superadmin"), (_req, res) => {
-  const employees = listHodOptions();
+employeesRouter.get("/options", authenticate, requireRole("superadmin"), async (_req, res) => {
+  const employees = await listHodOptions();
   return send(res, "Employee form options loaded.", {
     ...getLookups(),
     employees,
@@ -189,8 +189,8 @@ employeesRouter.put("/:id", authenticate, requireRole("superadmin"), (req, res) 
   return send(res, "Employee updated.", result.record);
 });
 
-employeesRouter.delete("/:id", authenticate, requireRole("superadmin"), (req, res) => {
-  const result = performStaffAction(req.params.id, "deactivate", req.body || {}, req.user, req);
+employeesRouter.delete("/:id", authenticate, requireRole("superadmin"), async (req, res) => {
+  const result = await performStaffAction(req.params.id, "deactivate", req.body || {}, req.user, req);
   if (!result) {
     return notFound(res, req.params.id);
   }
@@ -207,8 +207,8 @@ employeesRouter.delete("/:id", authenticate, requireRole("superadmin"), (req, re
 });
 
 for (const action of EMPLOYEE_ACTIONS.filter((item) => item !== "reset-password")) {
-  employeesRouter.post(`/:id/${action}`, authenticate, requireRole("superadmin"), (req, res) => {
-    const result = performStaffAction(req.params.id, action, req.body || {}, req.user, req);
+  employeesRouter.post(`/:id/${action}`, authenticate, requireRole("superadmin"), async (req, res) => {
+    const result = await performStaffAction(req.params.id, action, req.body || {}, req.user, req);
     if (!result) {
       return notFound(res, req.params.id);
     }
@@ -225,12 +225,12 @@ for (const action of EMPLOYEE_ACTIONS.filter((item) => item !== "reset-password"
   });
 }
 
-employeesRouter.post("/:id/reset-password", authenticate, requireRole("superadmin"), (req, res) => {
+employeesRouter.post("/:id/reset-password", authenticate, requireRole("superadmin"), async (req, res) => {
   const password = req.body?.password || generateTemporaryPassword();
   if (typeof password !== "string" || password.length < 8) {
     return fail(res, 400, "INVALID_PASSWORD", "Password must be at least 8 characters.", { minLength: 8 });
   }
-  const user = resetStaffPassword(req.params.id, password, req.user, req);
+  const user = await resetStaffPassword(req.params.id, password, req.user, req);
   if (!user) {
     return notFound(res, req.params.id);
   }

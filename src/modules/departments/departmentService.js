@@ -404,7 +404,7 @@ function filterDepartments(departments, query = {}) {
   return sortRecords(filtered, sortBy === "createdDate" ? "createdAt" : sortBy, query.order || query.sortDirection || "asc");
 }
 
-function listDepartments(query = {}) {
+async function listDepartments(query = {}) {
   ensureDefaultDepartments();
   const departments = filterDepartments(readActive("departments"), query);
   const result = paginate(departments, query);
@@ -439,7 +439,7 @@ function listDepartments(query = {}) {
           },
         ],
       },
-      hods: listHodOptions(),
+      hods: await listHodOptions(),
     },
   };
 }
