@@ -6,6 +6,7 @@ const { applyBasicFilters, paginate } = require("../../utils/query");
 const { recordOperationalAudit, recordTechnicalAuditEvent } = require("../_shared/auditService");
 const emailService = require("../email/email.service");
 const smsService = require("./sms.service");
+const webPushProvider = require("./webPush.provider");
 
 const NOTIFICATION_COLLECTION = "notifications";
 const DELIVERY_LOG_COLLECTION = "notification_delivery_logs";
@@ -18,7 +19,34 @@ const PUSH_SUBSCRIPTION_COLLECTION = "push_subscriptions";
 
 const CHANNELS = Object.freeze(["in_app", "email", "sms", "push"]);
 const PRIORITIES = Object.freeze(["low", "normal", "high", "urgent"]);
-const MAX_RETRIES = 3;
+const MAX_RETRIES = Number(process.env.NOTIFICATION_MAX_RETRIES || 3);
+const DESTINATION_ALLOWLIST = Object.freeze([
+  "/notifications",
+  "/messages",
+  "/employee",
+  "/accountant",
+  "/intern",
+  "/nysc",
+  "/attendance",
+  "/leave",
+  "/meetings",
+  "/events",
+  "/tasks",
+  "/targets",
+  "/expenses",
+  "/payroll",
+  "/announcements",
+  "/bills",
+  "/procurement",
+  "/dashboard",
+  "/hr",
+  "/manager",
+  "/super-admin",
+  "/profile",
+  "/home",
+  "/check-in",
+  "/settings",
+]);
 
 const NOTIFICATION_PERMISSIONS = Object.freeze({
   VIEW_CONFIG: "notification_config.view",
@@ -109,7 +137,12 @@ function normalizeDestinationUrl(value) {
     return null;
   }
   const destination = String(value).trim();
-  if (!destination.startsWith("/") || destination.startsWith("//") || destination.includes("\\") || /[\r\n]/.test(destination)) {
+  if (!destination.startsWith("/") || destination.startsWith("//") || destination.includes("\\") || /[\r\n]/.test(destination) || destination.includes("://")) {
+    throw createHttpError(400, "Notification destination URL must be an internal route.", "INVALID_NOTIFICATION_DESTINATION");
+  }
+  const pathOnly = destination.split("?")[0].split("#")[0];
+  const allowed = DESTINATION_ALLOWLIST.some((prefix) => pathOnly === prefix || pathOnly.startsWith(`${prefix}/`));
+  if (!allowed) {
     throw createHttpError(400, "Notification destination URL must be an internal route.", "INVALID_NOTIFICATION_DESTINATION");
   }
   return destination;
@@ -125,7 +158,12 @@ function endpointHash(endpoint) {
 }
 
 function getVapidPublicKey() {
-  return process.env.WEB_PUSH_VAPID_PUBLIC_KEY || null;
+  return webPushProvider.getVapidConfig().publicKey || process.env.WEB_PUSH_VAPID_PUBLIC_KEY || null;
+}
+
+function retryDelayMs(retryCount) {
+  const attempt = Math.max(1, Number(retryCount) || 1);
+  return Math.min(30 * 60 * 1000, 60 * 1000 * 2 ** (attempt - 1));
 }
 
 function getCollectionRecord(collection, predicate) {
@@ -261,7 +299,7 @@ function getChannelsMap() {
       summary[record.channel] = Boolean(record.isEnabled ?? record.is_enabled);
       return summary;
     },
-    { in_app: true, email: true, sms: false }
+    { in_app: true, email: true, sms: false, push: true }
   );
 }
 
@@ -671,7 +709,8 @@ function send(payload = {}, options = {}) {
         channel,
         runAt,
         payload: {
-          to: contact,
+          subscriptionIds: channel === "push" && Array.isArray(contact) ? contact.map((subscription) => subscription.id).filter(Boolean) : undefined,
+          to: channel === "push" ? undefined : contact,
           subject: payload.subject || payload.title,
           message: channel === "push" ? minimalPushMessage(payload) : payload.message || payload.body,
           body: channel === "push" ? minimalPushMessage(payload) : payload.body || payload.message,
@@ -938,38 +977,46 @@ async function deliverJob(job, req = null) {
   const notification = readCollection(NOTIFICATION_COLLECTION).find((record) => record.id === (job.notificationId || job.notification_id));
   const user = getUserById(job.userId || job.user_id);
   if (job.channel === "push") {
-    const subscriptions = Array.isArray(job.payload.to) ? job.payload.to : [];
-    const configured = Boolean(process.env.WEB_PUSH_VAPID_PUBLIC_KEY && process.env.WEB_PUSH_VAPID_PRIVATE_KEY && process.env.WEB_PUSH_VAPID_SUBJECT);
+    const subscriptionIds = Array.isArray(job.payload.subscriptionIds) ? job.payload.subscriptionIds : [];
+    const storedSubscriptions = Array.isArray(job.payload.to) ? job.payload.to : [];
+    const subscriptions = subscriptionIds.length
+      ? readCollection(PUSH_SUBSCRIPTION_COLLECTION).filter((subscription) => subscriptionIds.includes(subscription.id))
+      : storedSubscriptions;
     let sent = 0;
     let skipped = 0;
+    let expired = 0;
     for (const subscription of subscriptions) {
-      if (!subscription || subscription.forceGone || subscription.force_gone) {
-        if (subscription?.id) {
-          updatePushSubscription(subscription.id, {
-            disabledAt: now(),
-            disabled_at: now(),
-            disabledReason: "expired",
-            disabled_reason: "expired",
-          });
-        }
+      const result = await webPushProvider.sendPushNotification(subscription, job.payload.message || job.payload.body || {});
+      if (result.expired && subscription?.id) {
+        updatePushSubscription(subscription.id, {
+          disabledAt: now(),
+          disabled_at: now(),
+          disabledReason: "expired",
+          disabled_reason: "expired",
+          failureCount: Number(subscription.failureCount || subscription.failure_count || 0) + 1,
+          failure_count: Number(subscription.failureCount || subscription.failure_count || 0) + 1,
+        });
+        expired += 1;
         createDeliveryLog({ notification, user, channel: "push", status: "failed", provider: "web-push", errorMessage: "Subscription expired.", attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
         continue;
       }
-      if (!configured && process.env.WEB_PUSH_MOCK_DELIVERY !== "success") {
+      if (result.status === "skipped") {
         skipped += 1;
         createDeliveryLog({ notification, user, channel: "push", status: "skipped", provider: "web-push", errorMessage: "Web Push transport is not configured.", attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
         continue;
       }
       sent += 1;
-      updatePushSubscription(subscription.id, {
-        lastSuccessfulDeliveryAt: now(),
-        last_successful_delivery_at: now(),
-        failureCount: 0,
-        failure_count: 0,
-      });
+      if (subscription?.id) {
+        updatePushSubscription(subscription.id, {
+          lastSuccessfulDeliveryAt: now(),
+          last_successful_delivery_at: now(),
+          failureCount: 0,
+          failure_count: 0,
+        });
+      }
       createDeliveryLog({ notification, user, channel: "push", status: "sent", provider: "web-push", providerMessageId: notification?.id, attemptCount: Number(job.retryCount || job.retry_count || 0) + 1 });
     }
-    return { status: sent ? "sent" : "skipped", sent, skipped };
+    return { status: sent ? "sent" : expired ? "failed" : "skipped", sent, skipped, expired };
   }
   if (job.channel === "email") {
     const result = await emailService.sendEmail({
@@ -1010,8 +1057,8 @@ async function processQueue(limit = 25, req = null) {
         status: failed ? "failed" : "retrying",
         retryCount,
         retry_count: retryCount,
-        nextRunAt: new Date(Date.now() + retryCount * 60 * 1000).toISOString(),
-        next_run_at: new Date(Date.now() + retryCount * 60 * 1000).toISOString(),
+        nextRunAt: new Date(Date.now() + retryDelayMs(retryCount)).toISOString(),
+        next_run_at: new Date(Date.now() + retryDelayMs(retryCount)).toISOString(),
         lastError: error.publicMessage || error.message,
         last_error: error.publicMessage || error.message,
       });
@@ -1064,7 +1111,9 @@ module.exports = {
   listUserNotifications,
   markAllAsRead,
   markAsRead,
+  normalizeDestinationUrl,
   processQueue,
+  retryDelayMs,
   send,
   subscribePush,
   unsubscribePush,

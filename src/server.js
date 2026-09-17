@@ -3,6 +3,8 @@ require("dotenv").config();
 const { createApp } = require("./app");
 const { ensureSuperadminFromEnv } = require("./auth/bootstrap");
 const { syncAllUsersToSupabase } = require("./auth/accountStore");
+const { hydrateJsonStoreFromPostgres } = require("./modules/_shared/postgresRecords");
+const { ensureEmployeeProfilesForUsers } = require("./modules/employees/employeeProfile");
 const { assertRuntimeConfig, getRuntimeConfig } = require("./config");
 const { startBackgroundWorkers, stopBackgroundWorkers } = require("./workers");
 
@@ -12,6 +14,9 @@ let server;
 
 async function start() {
   await syncAllUsersToSupabase();
+  await hydrateJsonStoreFromPostgres();
+  const accountStore = require("./auth/accountStore");
+  ensureEmployeeProfilesForUsers(await accountStore.listUsers());
   await ensureSuperadminFromEnv();
 
   const app = createApp();

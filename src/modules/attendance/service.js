@@ -6,6 +6,7 @@ const { applyBasicFilters, paginate } = require("../../utils/query");
 const { recordOperationalAudit } = require("../_shared/auditService");
 const notificationService = require("../notifications/notification.service");
 const { haversineDistanceMeters, toCoordinate } = require("./geo");
+const { assessCheckInRisk } = require("./risk");
 
 const LOCATION_COLLECTION = "attendance_locations";
 const SCHEDULE_COLLECTION = "attendance_schedules";
@@ -16,9 +17,11 @@ const MIN_RADIUS_METERS = Number(process.env.ATTENDANCE_MIN_RADIUS_METERS || 10)
 const MAX_RADIUS_METERS = Number(process.env.ATTENDANCE_MAX_RADIUS_METERS || 5000);
 const MAX_GPS_ACCURACY_METERS = Number(process.env.ATTENDANCE_MAX_GPS_ACCURACY_METERS || 100);
 const MAX_LOCATION_AGE_SECONDS = Number(process.env.ATTENDANCE_MAX_LOCATION_AGE_SECONDS || 300);
-const DEFAULT_OPENING_TIME = "08:00";
-const DEFAULT_LATE_AFTER_TIME = "09:30";
-const DEFAULT_CLOSING_TIME = "17:00";
+const DEFAULT_OPENING_TIME = process.env.ATTENDANCE_DEFAULT_OPENING_TIME || "08:50";
+const DEFAULT_LATE_AFTER_TIME = process.env.ATTENDANCE_DEFAULT_LATE_AFTER_TIME || "09:30";
+const DEFAULT_CLOSING_TIME = process.env.ATTENDANCE_DEFAULT_CLOSING_TIME || "17:00";
+const LOCATION_RETENTION_DAYS = Number(process.env.ATTENDANCE_LOCATION_RETENTION_DAYS || 365);
+const checkInLocks = new Set();
 
 const CHECK_IN_ROLES = new Set(["employee", "accountant", "intern", "nysc_intern"]);
 const ATTENDANCE_MONITOR_ROLES = new Set(["superadmin", "hr", "manager"]);
@@ -26,7 +29,6 @@ const ATTENDANCE_MANAGE_ROLES = new Set(["superadmin", "manager"]);
 const MANAGER_ROLES = new Set(["manager"]);
 const HR_VIEW_ROLES = new Set(["hr"]);
 const ACTIVE_STATUSES = new Set(["active", "confirmed", "probation", "ending_soon"]);
-const ACTOR_PROFILE_COLLECTIONS = ["employees", "nysc_intern_profiles", "interns", "nysc_members"];
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
 function now() {
@@ -108,19 +110,25 @@ function normalizeActorProfile(record, extras = {}) {
 }
 
 function getActorEmployee(user) {
-  for (const collection of ACTOR_PROFILE_COLLECTIONS) {
-    const record = activeRecords(collection).find((item) => recordMatchesUser(item, user));
-    if (!record) continue;
-    if (collection !== "nysc_intern_profiles") {
-      return normalizeActorProfile(record);
+  const role = normalizeRole(user?.role);
+  if (role === "intern" || role === "nysc_intern") {
+    for (const collection of ["nysc_intern_profiles", "interns", "nysc_members"]) {
+      const record = activeRecords(collection).find((item) => recordMatchesUser(item, user));
+      if (!record) continue;
+      const placement = collection === "nysc_intern_profiles" ? findPlacementForProfile(record) : null;
+      return normalizeActorProfile(record, {
+        departmentId: record.departmentId || record.department_id || placement?.departmentId || placement?.department_id || user?.departmentId || user?.department_id || null,
+        branchId: record.branchId || record.branch_id || placement?.branchId || placement?.branch_id || user?.branchId || user?.branch_id || null,
+        organizationId: record.organizationId || record.organization_id || placement?.organizationId || placement?.organization_id || user?.organizationId || user?.organization_id || null,
+        status: record.status || placement?.placementStatus || placement?.placement_status || placement?.status || "active",
+      });
     }
-    const placement = findPlacementForProfile(record);
-    return normalizeActorProfile(record, {
-      departmentId: record.departmentId || record.department_id || placement?.departmentId || placement?.department_id || user?.departmentId || user?.department_id || null,
-      branchId: record.branchId || record.branch_id || placement?.branchId || placement?.branch_id || user?.branchId || user?.branch_id || null,
-      organizationId: record.organizationId || record.organization_id || placement?.organizationId || placement?.organization_id || user?.organizationId || user?.organization_id || null,
-      status: record.status || placement?.placementStatus || placement?.placement_status || placement?.status || "active",
-    });
+  }
+
+  const { resolveEmployeeForUser } = require("../employees/employeeProfile");
+  const linked = resolveEmployeeForUser(user);
+  if (linked) {
+    return normalizeActorProfile(linked);
   }
   return null;
 }
@@ -633,6 +641,7 @@ function createLocation(payload = {}, req) {
   };
   appendRecord(LOCATION_COLLECTION, record);
   audit(req, "ATTENDANCE_LOCATION_CREATED", LOCATION_COLLECTION, record.id, null, safeAuditLocation(record));
+  notifyAttendanceChange("ATTENDANCE_LOCATION_UPDATED", "Check-in location updated", "An attendance location assigned to you was created.", record);
   return sanitizeLocation(record, true);
 }
 
@@ -677,6 +686,7 @@ function updateLocation(id, payload = {}, req) {
     updated_by: req.user.id,
   });
   audit(req, "ATTENDANCE_LOCATION_UPDATED", LOCATION_COLLECTION, id, safeAuditLocation(existing), safeAuditLocation(updated));
+  notifyAttendanceChange("ATTENDANCE_LOCATION_UPDATED", "Check-in location updated", "An attendance location assigned to you was updated.", updated);
   return sanitizeLocation(updated, true);
 }
 
@@ -693,6 +703,7 @@ function setLocationActive(id, active, req) {
     updated_by: req.user.id,
   });
   audit(req, active ? "ATTENDANCE_LOCATION_ENABLED" : "ATTENDANCE_LOCATION_DISABLED", LOCATION_COLLECTION, id, safeAuditLocation(existing), safeAuditLocation(updated));
+  notifyAttendanceChange("ATTENDANCE_LOCATION_UPDATED", active ? "Check-in location enabled" : "Check-in location disabled", "An attendance location assigned to you was updated.", updated);
   return sanitizeLocation(updated, true);
 }
 
@@ -721,6 +732,7 @@ function createSchedule(payload = {}, req) {
   };
   appendRecord(SCHEDULE_COLLECTION, record);
   audit(req, "ATTENDANCE_SCHEDULE_CREATED", SCHEDULE_COLLECTION, record.id, null, record);
+  notifyAttendanceChange("ATTENDANCE_LOCATION_UPDATED", "Check-in schedule updated", "Your check-in schedule was created.", record);
   return sanitizeSchedule(record);
 }
 
@@ -758,6 +770,7 @@ function updateSchedule(id, payload = {}, req) {
   }
   const updated = updateRecord(SCHEDULE_COLLECTION, id, { ...updates, updatedBy: req.user.id, updated_by: req.user.id });
   audit(req, "ATTENDANCE_SCHEDULE_UPDATED", SCHEDULE_COLLECTION, id, existing, updated);
+  notifyAttendanceChange("ATTENDANCE_LOCATION_UPDATED", "Check-in schedule updated", "Your check-in schedule was updated.", updated);
   return sanitizeSchedule(updated);
 }
 
@@ -820,7 +833,11 @@ function getGpsPolicy() {
   return {
     maxAccuracyMeters: MAX_GPS_ACCURACY_METERS,
     maxLocationAgeSeconds: MAX_LOCATION_AGE_SECONDS,
-    radiusPolicy: "The backend does not expand the approved radius for poor GPS accuracy.",
+    radiusPolicy: "The backend does not expand the approved radius for poor GPS accuracy. Browser GPS can be spoofed; this check-in is not spoof-proof.",
+    locationRetentionDays: LOCATION_RETENTION_DAYS,
+    defaultOpeningTime: DEFAULT_OPENING_TIME,
+    defaultLateAfterTime: DEFAULT_LATE_AFTER_TIME,
+    defaultClosingTime: DEFAULT_CLOSING_TIME,
   };
 }
 
@@ -893,6 +910,52 @@ function validatePositionPayload(payload = {}, at = new Date()) {
     clientTimezone: payload.clientTimezone || payload.client_timezone || null,
     device: payload.device || payload.deviceInfo || payload.device_info || null,
   };
+}
+
+function findLatestCheckIn(employeeId) {
+  return activeRecords(ATTENDANCE_COLLECTION)
+    .filter((record) => (record.employeeId || record.employee_id) === employeeId && record.latitude != null && record.longitude != null)
+    .sort((left, right) => new Date(right.checkInAt || right.check_in_at || right.createdAt || 0) - new Date(left.checkInAt || left.check_in_at || left.createdAt || 0))[0] || null;
+}
+
+function notifyAttendanceChange(type, title, message, record) {
+  try {
+    const userIds = new Set();
+    const assignedIds = [
+      record.employeeId,
+      record.employee_id,
+      ...normalizeAssignedIds(record.employeeIds || record.employee_ids),
+    ].filter(Boolean);
+    const departmentIds = new Set([
+      record.departmentId,
+      record.department_id,
+      ...normalizeAssignedIds(record.departmentIds || record.department_ids),
+    ].filter(Boolean));
+
+    for (const employee of activeRecords("employees")) {
+      const matchesAssignment = assignedIds.some((id) => [employee.id, employee.userId, employee.user_id].map(String).includes(String(id)));
+      const matchesDepartment = departmentIds.has(employee.departmentId || employee.department_id);
+      if ((matchesAssignment || matchesDepartment) && (employee.userId || employee.user_id)) {
+        userIds.add(employee.userId || employee.user_id);
+      }
+    }
+
+    for (const userId of userIds) {
+      const user = getUserById(userId);
+      notificationService.send({
+        userId,
+        type,
+        title,
+        message,
+        destinationUrl: checkInDestination(user?.role),
+        channels: ["in_app", "push"],
+        idempotencyKey: `${type}:${record.id}:${userId}`,
+        data: { recordId: record.id },
+      });
+    }
+  } catch (_error) {
+    // Push/in-app delivery must not fail location or schedule writes.
+  }
 }
 
 function findExistingCheckIn(employeeId, scheduleId, workDate) {
@@ -972,76 +1035,101 @@ function createCheckIn(payload = {}, req, options = {}) {
   }
 
   const candidate = selectCheckInCandidate(scope, payload, reading, at);
-  const existing = findExistingCheckIn(scope.employeeId, candidate.schedule.id, candidate.window.workDate);
-  if (existing) {
+  const lockKey = `${scope.employeeId}:${candidate.schedule.id}:${candidate.window.workDate}`;
+  if (checkInLocks.has(lockKey)) {
     throw createHttpError(409, "You have already checked in today.", "ALREADY_CHECKED_IN", { workDate: candidate.window.workDate });
   }
+  checkInLocks.add(lockKey);
+  try {
+    const existing = findExistingCheckIn(scope.employeeId, candidate.schedule.id, candidate.window.workDate);
+    if (existing) {
+      throw createHttpError(409, "You have already checked in today.", "ALREADY_CHECKED_IN", { workDate: candidate.window.workDate });
+    }
 
-  const checkInStatus = candidate.window.isLate ? "late" : "on_time";
-  const timezoneMismatch = Boolean(reading.clientTimezone && reading.clientTimezone !== candidate.window.timezone);
-  const timestamp = now();
-  const record = {
-    id: crypto.randomUUID(),
-    userId: req.user.id,
-    user_id: req.user.id,
-    employeeId: scope.employeeId,
-    employee_id: scope.employeeId,
-    employeeName: scope.employee.fullName || scope.employee.name || req.user.fullName || req.user.name || null,
-    employee_name: scope.employee.fullName || scope.employee.name || req.user.fullName || req.user.name || null,
-    organizationId: scope.organizationId,
-    organization_id: scope.organizationId,
-    departmentId: scope.departmentId,
-    department_id: scope.departmentId,
-    locationId: candidate.location.id,
-    location_id: candidate.location.id,
-    scheduleId: candidate.schedule.id,
-    schedule_id: candidate.schedule.id,
-    workDate: candidate.window.workDate,
-    work_date: candidate.window.workDate,
-    date: candidate.window.workDate,
-    checkIn: at.toISOString(),
-    check_in: at.toISOString(),
-    checkInAt: at.toISOString(),
-    check_in_at: at.toISOString(),
-    latitude: reading.latitude,
-    longitude: reading.longitude,
-    accuracyMeters: reading.accuracyMeters,
-    accuracy_meters: reading.accuracyMeters,
-    calculatedDistanceMeters: Math.round(candidate.distanceMeters * 100) / 100,
-    calculated_distance_meters: Math.round(candidate.distanceMeters * 100) / 100,
-    clientLocationTimestamp: reading.locationTimestamp,
-    client_location_timestamp: reading.locationTimestamp,
-    clientTimezone: reading.clientTimezone,
-    client_timezone: reading.clientTimezone,
-    timezone: candidate.window.timezone,
-    status: checkInStatus,
-    attendanceStatus: checkInStatus,
-    attendance_status: checkInStatus,
-    riskFlags: timezoneMismatch ? ["CLIENT_TIMEZONE_MISMATCH"] : [],
-    risk_flags: timezoneMismatch ? ["CLIENT_TIMEZONE_MISMATCH"] : [],
-    source: "web_check_in",
-    idempotencyKey,
-    idempotency_key: idempotencyKey,
-    device: reading.device,
-    createdAt: timestamp,
-    created_at: timestamp,
-    updatedAt: timestamp,
-    updated_at: timestamp,
-  };
+    const checkInStatus = candidate.window.isLate ? "late" : "on_time";
+    const riskFlags = assessCheckInRisk({
+      reading,
+      candidate,
+      previousCheckIn: findLatestCheckIn(scope.employeeId),
+      at,
+    });
+    const timestamp = now();
+    const record = {
+      id: crypto.randomUUID(),
+      userId: req.user.id,
+      user_id: req.user.id,
+      employeeId: scope.employeeId,
+      employee_id: scope.employeeId,
+      employeeName: scope.employee.fullName || scope.employee.name || req.user.fullName || req.user.name || null,
+      employee_name: scope.employee.fullName || scope.employee.name || req.user.fullName || req.user.name || null,
+      organizationId: scope.organizationId,
+      organization_id: scope.organizationId,
+      departmentId: scope.departmentId,
+      department_id: scope.departmentId,
+      locationId: candidate.location.id,
+      location_id: candidate.location.id,
+      scheduleId: candidate.schedule.id,
+      schedule_id: candidate.schedule.id,
+      workDate: candidate.window.workDate,
+      work_date: candidate.window.workDate,
+      date: candidate.window.workDate,
+      checkIn: at.toISOString(),
+      check_in: at.toISOString(),
+      checkInAt: at.toISOString(),
+      check_in_at: at.toISOString(),
+      latitude: reading.latitude,
+      longitude: reading.longitude,
+      accuracyMeters: reading.accuracyMeters,
+      accuracy_meters: reading.accuracyMeters,
+      calculatedDistanceMeters: Math.round(candidate.distanceMeters * 100) / 100,
+      calculated_distance_meters: Math.round(candidate.distanceMeters * 100) / 100,
+      clientLocationTimestamp: reading.locationTimestamp,
+      client_location_timestamp: reading.locationTimestamp,
+      clientTimezone: reading.clientTimezone,
+      client_timezone: reading.clientTimezone,
+      timezone: candidate.window.timezone,
+      status: checkInStatus,
+      attendanceStatus: checkInStatus,
+      attendance_status: checkInStatus,
+      riskFlags,
+      risk_flags: riskFlags,
+      source: "web_check_in",
+      idempotencyKey,
+      idempotency_key: idempotencyKey,
+      device: reading.device,
+      createdAt: timestamp,
+      created_at: timestamp,
+      updatedAt: timestamp,
+      updated_at: timestamp,
+    };
 
-  appendRecord(ATTENDANCE_COLLECTION, record);
-  audit(req, "ATTENDANCE_CHECK_IN_ACCEPTED", ATTENDANCE_COLLECTION, record.id, null, safeAuditAttendance(record));
-  notificationService.send({
-    userId: req.user.id,
-    type: "ATTENDANCE_CHECK_IN_ACCEPTED",
-    title: "Check-in successful",
-    message: `Your ${checkInStatus === "late" ? "late" : "on-time"} check-in was recorded.`,
-    destinationUrl: checkInDestination(req.user.role),
-    idempotencyKey: `attendance-check-in:${record.id}`,
-    channels: ["in_app", "push"],
-    data: { attendanceId: record.id, workDate: record.workDate, status: checkInStatus },
+    appendRecord(ATTENDANCE_COLLECTION, record);
+    audit(req, "ATTENDANCE_CHECK_IN_ACCEPTED", ATTENDANCE_COLLECTION, record.id, null, safeAuditAttendance(record));
+    try {
+      notificationService.send({
+        userId: req.user.id,
+        type: "ATTENDANCE_CHECK_IN_ACCEPTED",
+        title: "Check-in successful",
+        message: `Your ${checkInStatus === "late" ? "late" : "on-time"} check-in was recorded.`,
+        destinationUrl: checkInDestination(req.user.role),
+        idempotencyKey: `attendance-check-in:${record.id}`,
+        channels: ["in_app", "push"],
+        data: { attendanceId: record.id, workDate: record.workDate, status: checkInStatus },
+      });
+    } catch (_error) {
+      // Persistent check-in already saved; push failure must not roll it back.
+    }
+    return { record: sanitizeAttendance(record), created: true, idempotent: false };
+  } finally {
+    checkInLocks.delete(lockKey);
+  }
+}
+
+function auditCheckInRejected(req, error) {
+  audit(req, "ATTENDANCE_CHECK_IN_REJECTED", ATTENDANCE_COLLECTION, null, null, {
+    code: error?.code || "ATTENDANCE_CHECK_IN_REJECTED",
+    message: error?.publicMessage || error?.message || "Check-in rejected.",
   });
-  return { record: sanitizeAttendance(record), created: true, idempotent: false };
 }
 
 function safeAuditLocation(location) {
@@ -1192,9 +1280,11 @@ function getSummary(user, query = {}) {
 }
 
 module.exports = {
+  auditCheckInRejected,
   createCheckIn,
   createLocation,
   createSchedule,
+  DEFAULT_OPENING_TIME,
   evaluateScheduleWindow,
   getCheckInStatus,
   getRecord,

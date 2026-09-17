@@ -412,7 +412,7 @@ Create / update request:
 }
 ```
 
-Times are `HH:mm` in the schedule/location timezone. Defaults: open `08:00`, late after `09:30`, close `17:00`. `daysOfWeek` uses `0` = Sunday through `6` = Saturday; default is Monday–Friday. Closing before opening is treated as overnight.
+Times are `HH:mm` in the schedule/location timezone. Defaults: open `08:50`, late after `09:30`, close `17:00`. `daysOfWeek` uses `0` = Sunday through `6` = Saturday; default is Monday–Friday. Closing before opening is treated as overnight.
 
 The backend uses trusted server time and stores check-in timestamps in UTC.
 

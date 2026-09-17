@@ -346,7 +346,7 @@ async function createUserAccount(payload, actor, req) {
     role: role.key,
     roleId: role.id,
     permissions: Array.isArray(payload.permissions) && payload.permissions.length > 0 ? payload.permissions : role.permissions,
-    status: payload.status ? normalizeStatus(payload.status) : "pending",
+    status: payload.status ? normalizeStatus(payload.status) : "active",
     accountType: normalizeAccountType(payload.accountType, role.key),
     departmentId: department?.id || null,
     employeeId: employee?.id || null,
@@ -357,6 +357,17 @@ async function createUserAccount(payload, actor, req) {
     activationTokenHash: hashToken(activationToken),
     activationTokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
   });
+
+  const { ensureEmployeeProfile } = require("../employees/employeeProfile");
+  const profile = ensureEmployeeProfile(user, {
+    employeeId: employee?.employeeId || employee?.employee_id || employee?.id || payload.employeeId,
+    departmentId: department?.id || null,
+    department: department?.name || null,
+    jobTitle: payload.jobTitle || payload.job_title || null,
+  });
+  if (profile && !user.employeeId) {
+    await accountStore.updateUser(user.id, { employeeId: profile.id });
+  }
 
   appendRecord("user_roles", {
     id: crypto.randomUUID(),

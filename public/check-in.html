@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check in · Afresh</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#EA580C">
+  <link rel="icon" href="/pwa/icons/icon.svg" type="image/svg+xml">
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { margin: 0; background: #fff7ed; color: #7c2d12; }
+    main { max-width: 42rem; margin: 0 auto; padding: 1.5rem; }
+    h1 { color: #c2410c; font-weight: 650; }
+    .card { background: #fff; border-radius: 1rem; padding: 1rem 1.25rem; margin: 0.75rem 0; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }
+    button { background: #ea580c; color: #fff; border: 0; border-radius: 999px; padding: 0.75rem 1.25rem; font-size: 1rem; cursor: pointer; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.secondary { background: #fed7aa; color: #9a3412; }
+    input { width: 100%; box-sizing: border-box; padding: 0.65rem 0.75rem; border: 1px solid #fdba74; border-radius: 0.6rem; margin: 0.35rem 0 0.75rem; }
+    .status { font-size: 0.95rem; }
+    .ok { color: #166534; }
+    .err { color: #b91c1c; }
+    .muted { color: #9a3412; font-size: 0.9rem; }
+    label { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="muted">Afresh · Employee attendance</p>
+    <h1>Check in</h1>
+    <p>Location is used only when you tap Check in. The server decides whether you are inside an approved workplace. Device time is not used as proof.</p>
+
+    <section class="card" id="login-card">
+      <h2>Sign in</h2>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username">
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password">
+      <button type="button" id="login-btn">Sign in</button>
+      <p class="muted" id="login-msg"></p>
+    </section>
+
+    <section class="card" hidden id="status-card">
+      <h2>Today</h2>
+      <p class="status" id="availability"></p>
+      <p class="muted" id="schedule"></p>
+      <p class="muted" id="location-state"></p>
+      <p class="muted" id="accuracy"></p>
+      <button type="button" id="locate-btn">Use my location</button>
+      <button type="button" id="checkin-btn" disabled>Check in</button>
+      <p class="status" id="result"></p>
+    </section>
+
+    <section class="card" hidden id="push-card">
+      <h2>Notifications</h2>
+      <p>The in-app notification centre stays available even if you decline browser push.</p>
+      <p class="muted" id="ios-note" hidden>On iPhone and iPad, add this page to your Home Screen to enable Web Push.</p>
+      <button type="button" class="secondary" id="enable-push">Enable push notifications</button>
+      <button type="button" class="secondary" id="disable-push">Disable push</button>
+      <p class="muted" id="push-msg"></p>
+    </section>
+  </main>
+  <script type="module">
+    import { getPushCapability, enablePushNotifications, disablePushNotifications, rememberPushDeclined } from "/pwa/js/web-push-client.js";
+    import { geolocationSupported, readFreshPosition, canSubmitCheckIn, loadCheckInStatus, submitCheckIn } from "/pwa/js/attendance-checkin.js";
+
+    const apiOrigin = window.location.origin;
+    const state = { token: localStorage.getItem("wms_access_token"), position: null, status: null, permission: "prompt" };
+
+    const loginCard = document.getElementById("login-card");
+    const statusCard = document.getElementById("status-card");
+    const pushCard = document.getElementById("push-card");
+    const checkInBtn = document.getElementById("checkin-btn");
+
+    function setText(id, text, className) {
+      const node = document.getElementById(id);
+      node.textContent = text || "";
+      node.className = className || "muted";
+    }
+
+    function refreshButton() {
+      const decision = canSubmitCheckIn({ permission: state.permission, position: state.position, status: state.status });
+      checkInBtn.disabled = !decision.enabled;
+      if (!decision.enabled && decision.reason) setText("result", decision.reason, "err");
+    }
+
+    async function refreshStatus() {
+      const payload = await loadCheckInStatus({ apiOrigin, token: state.token });
+      state.status = payload.data;
+      const first = payload.data?.schedules?.[0];
+      setText("availability", payload.data?.canCheckIn ? "Check-in is currently open." : "Check-in is not available.", payload.data?.canCheckIn ? "ok" : "err");
+      setText("schedule", first ? `Opens ${first.window.openingTime}, closes ${first.window.closingTime} (${first.window.timezone}).` : "No assigned schedule.");
+      setText("location-state", first?.locations?.[0] ? `Assigned location: ${first.locations[0].name}` : "No assigned location.");
+      refreshButton();
+    }
+
+    async function afterLogin() {
+      loginCard.hidden = true;
+      statusCard.hidden = false;
+      pushCard.hidden = false;
+      const capability = getPushCapability();
+      document.getElementById("ios-note").hidden = !capability.iosNeedsInstall;
+      if (!geolocationSupported()) {
+        setText("location-state", "Location services are not supported in this browser.", "err");
+        checkInBtn.disabled = true;
+      }
+      await refreshStatus();
+    }
+
+    document.getElementById("login-btn").addEventListener("click", async () => {
+      const response = await fetch(`${apiOrigin}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: document.getElementById("email").value, password: document.getElementById("password").value }),
+      });
+      const payload = await response.json();
+      const token = payload.data?.accessToken || payload.data?.token || payload.accessToken;
+      if (!response.ok || !token) {
+        setText("login-msg", payload.error?.details?.message || payload.message || "Sign-in failed.", "err");
+        return;
+      }
+      state.token = token;
+      localStorage.setItem("wms_access_token", token);
+      await afterLogin();
+    });
+
+    document.getElementById("locate-btn").addEventListener("click", async () => {
+      try {
+        state.permission = (navigator.permissions && (await navigator.permissions.query({ name: "geolocation" })).state) || "granted";
+        state.position = await readFreshPosition();
+        setText("accuracy", `Accuracy ${Math.round(state.position.accuracyMeters)} metres.`, "ok");
+        setText("result", "", "status");
+        refreshButton();
+      } catch (error) {
+        state.permission = "denied";
+        setText("result", error.message, "err");
+        refreshButton();
+      }
+    });
+
+    checkInBtn.addEventListener("click", async () => {
+      checkInBtn.disabled = true;
+      setText("result", "Checking in…", "status");
+      const payload = await submitCheckIn({ apiOrigin, token: state.token, position: state.position });
+      if (payload.success) {
+        const when = payload.data?.checkInAt || "";
+        setText("result", `Checked in ${payload.data.status.replace("_", " ")} at ${when}.`, "ok");
+        await refreshStatus();
+      } else {
+        setText("result", payload.error?.details?.message || payload.message || "Check-in failed.", "err");
+        refreshButton();
+      }
+    });
+
+    document.getElementById("enable-push").addEventListener("click", async () => {
+      try {
+        const keyRes = await fetch(`${apiOrigin}/api/v1/notifications/push/public-key`, {
+          headers: { Authorization: `Bearer ${state.token}` },
+        });
+        const keyPayload = await keyRes.json();
+        await enablePushNotifications({ apiOrigin, token: state.token, publicKey: keyPayload.data.publicKey });
+        setText("push-msg", "Push notifications enabled.", "ok");
+      } catch (error) {
+        rememberPushDeclined();
+        setText("push-msg", error.message, "err");
+      }
+    });
+
+    document.getElementById("disable-push").addEventListener("click", async () => {
+      await disablePushNotifications({ apiOrigin, token: state.token });
+      setText("push-msg", "Push notifications disabled. In-app notifications remain available.", "ok");
+    });
+
+    if (state.token) afterLogin();
+  </script>
+</body>
+</html>

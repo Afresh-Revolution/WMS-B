@@ -587,18 +587,39 @@ async function createStaff(body, actor, req) {
   const collection = getCollectionForStaffType(staffType);
   const timestamp = now();
   const user = await createSystemUserIfRequested({ record, systemAccess });
+  const { findEmployeeForUser, ensureEmployeeProfile } = require("../employees/employeeProfile");
+  const existingProfile = user ? findEmployeeForUser(user) : null;
   const staffRecord = {
-    id: crypto.randomUUID(),
+    id: existingProfile?.id || crypto.randomUUID(),
+    ...existingProfile,
     ...record,
-    userId: user?.id || null,
-    createdBy: actor?.id || null,
-    createdAt: timestamp,
+    userId: user?.id || existingProfile?.userId || null,
+    user_id: user?.id || existingProfile?.user_id || null,
+    createdBy: actor?.id || existingProfile?.createdBy || null,
+    createdAt: existingProfile?.createdAt || timestamp,
     updatedAt: timestamp,
   };
 
   const records = readCollection(collection);
-  records.push(staffRecord);
+  const existingIndex = records.findIndex((item) => item.id === staffRecord.id);
+  if (existingIndex === -1) {
+    records.push(staffRecord);
+  } else {
+    records[existingIndex] = { ...records[existingIndex], ...staffRecord };
+  }
   writeCollection(collection, records);
+
+  if (user) {
+    ensureEmployeeProfile(
+      { ...user, employeeId: staffRecord.id, email: staffRecord.email || user.email },
+      {
+        employeeId: staffRecord.employeeId || staffRecord.employee_id,
+        departmentId: staffRecord.departmentId,
+        department: staffRecord.department,
+        jobTitle: staffRecord.jobTitle,
+      }
+    );
+  }
 
   if (Array.isArray(documents)) {
     for (const document of documents) {

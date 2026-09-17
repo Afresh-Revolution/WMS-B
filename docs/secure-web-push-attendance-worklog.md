@@ -634,7 +634,7 @@ Do not stop after generating a plan or sample code. Implement the feature fully 
 - API routes are mounted under `/api/v1/notifications`, `/api/notifications`, `/api/v1/attendance`, and `/api/attendance`.
 - PostgreSQL and Prisma schema contracts include notification jobs, delivery logs, push subscriptions, attendance locations, attendance schedules, and attendance check-in fields/indexes.
 - Endpoint documentation is maintained in `docs/attendance-and-push-endpoints.md`.
-- Current schedule defaults are opening time `08:00`, late-after time `09:30`, and closing time `17:00`.
+- Current schedule defaults are opening time `08:50`, late-after time `09:30`, and closing time `17:00`.
 - Attendance record listing is available to super admin and HR through `/api/v1/attendance/records`; managers and HOD users remain scoped to their assigned teams.
 - Placeholder environment variables are documented in `.env.example`; real secrets must stay in local/production environment configuration only.
 

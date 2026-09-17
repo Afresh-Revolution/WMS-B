@@ -1,6 +1,7 @@
 const { hasPermission } = require("../../constants/rbac");
 const { paginate } = require("../../utils/query");
 const { queueNotification } = require("../_shared/notificationService");
+const { resolveEmployeeForUser } = require("../employees/employeeProfile");
 const { APPROVAL_STATUS, DURATION_TYPE, LEAVE_PERMISSIONS, LEAVE_STATUS } = require("./constants");
 const { calculateLeaveDuration, parseDateOnly } = require("./leave-duration.service");
 const repository = require("./leave.repository");
@@ -37,7 +38,7 @@ function assertActiveEmployee(employee) {
 }
 
 function getActorEmployee(user) {
-  return repository.findEmployeeByUserId(user?.id);
+  return resolveEmployeeForUser(user);
 }
 
 function requireEmployeeForUser(user) {

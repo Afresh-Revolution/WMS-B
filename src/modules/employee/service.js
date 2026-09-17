@@ -6,6 +6,7 @@ const expenseService = require("../expenses/expense.service");
 const leaveService = require("../leave/leave.service");
 const meetingService = require("../meetings/meeting.service");
 const targetService = require("../targets/target.service");
+const { resolveEmployeeForUser } = require("../employees/employeeProfile");
 
 const EMPLOYEE_NAVIGATION = Object.freeze([
   "Home",
@@ -112,16 +113,7 @@ function findEmployeeRecord(id) {
 }
 
 function getActorEmployee(user) {
-  const userEmployeeId = user?.employeeId || user?.employee_id;
-  return (
-    activeRecords("employees").find((employee) =>
-      employee.id === userEmployeeId ||
-      employee.employeeId === userEmployeeId ||
-      employee.employee_id === userEmployeeId ||
-      employee.userId === user?.id ||
-      employee.user_id === user?.id
-    ) || null
-  );
+  return resolveEmployeeForUser(user);
 }
 
 function getOrganizationId(user, employee = null) {

@@ -20,11 +20,8 @@ function paged(res, message, result) {
   return send(res, message, result.data, result.meta);
 }
 
-function registerSelfServiceAttendance(router, actor = "Attendance") {
-  router.get("/attendance/locations", handle((req, res) => paged(res, `${actor} attendance locations loaded.`, attendanceService.listMyLocations(req.user, req.query))));
-  router.get("/attendance/status", handle((req, res) => send(res, `${actor} check-in status loaded.`, attendanceService.getCheckInStatus(req.user, req.query))));
-  router.get("/attendance/history", handle((req, res) => paged(res, `${actor} attendance history loaded.`, attendanceService.listMyHistory(req.user, req.query))));
-  router.post("/attendance/check-in", handle((req, res) => {
+function submitCheckIn(req, res) {
+  try {
     const result = attendanceService.createCheckIn(req.body || {}, req);
     return res.status(result.created ? 201 : 200).json({
       success: true,
@@ -32,7 +29,17 @@ function registerSelfServiceAttendance(router, actor = "Attendance") {
       data: result.record,
       meta: { idempotent: result.idempotent },
     });
-  }));
+  } catch (error) {
+    attendanceService.auditCheckInRejected(req, error);
+    throw error;
+  }
+}
+
+function registerSelfServiceAttendance(router, actor = "Attendance") {
+  router.get("/attendance/locations", handle((req, res) => paged(res, `${actor} attendance locations loaded.`, attendanceService.listMyLocations(req.user, req.query))));
+  router.get("/attendance/status", handle((req, res) => send(res, `${actor} check-in status loaded.`, attendanceService.getCheckInStatus(req.user, req.query))));
+  router.get("/attendance/history", handle((req, res) => paged(res, `${actor} attendance history loaded.`, attendanceService.listMyHistory(req.user, req.query))));
+  router.post("/attendance/check-in", handle(submitCheckIn));
 }
 
 attendanceRouter.use(authenticate);
@@ -40,15 +47,7 @@ attendanceRouter.use(authenticate);
 attendanceRouter.get("/me/locations", handle((req, res) => paged(res, "Assigned attendance locations loaded.", attendanceService.listMyLocations(req.user, req.query))));
 attendanceRouter.get("/me/status", handle((req, res) => send(res, "Check-in status loaded.", attendanceService.getCheckInStatus(req.user, req.query))));
 attendanceRouter.get("/me/history", handle((req, res) => paged(res, "My attendance history loaded.", attendanceService.listMyHistory(req.user, req.query))));
-attendanceRouter.post("/check-in", handle((req, res) => {
-  const result = attendanceService.createCheckIn(req.body || {}, req);
-  return res.status(result.created ? 201 : 200).json({
-    success: true,
-    message: result.created ? "Check-in recorded." : "Check-in already recorded.",
-    data: result.record,
-    meta: { idempotent: result.idempotent },
-  });
-}));
+attendanceRouter.post("/check-in", handle(submitCheckIn));
 
 attendanceRouter.get("/locations", handle((req, res) => paged(res, "Attendance locations loaded.", attendanceService.listLocations(req.user, req.query))));
 attendanceRouter.post("/locations", handle((req, res) => res.status(201).json({ success: true, message: "Attendance location created.", data: attendanceService.createLocation(req.body || {}, req), meta: {} })));

@@ -833,6 +833,7 @@ model Notification {
   jobs                NotificationJob[]
 
   @@index([userId, isRead, createdAt])
+  @@index([organizationId, createdAt])
   @@index([entityType, entityId])
   @@unique([idempotencyKey])
   @@map("notifications")
@@ -984,7 +985,7 @@ model AttendanceSchedule {
   locationIds    Json      @default("[]") @map("location_ids")
   name           String
   description    String?
-  openingTime    String    @default("08:00") @map("opening_time")
+  openingTime    String    @default("08:50") @map("opening_time")
   lateAfterTime  String    @default("09:30") @map("late_after_time")
   closingTime    String    @default("17:00") @map("closing_time")
   daysOfWeek     Json      @default("[1,2,3,4,5]") @map("days_of_week")
@@ -1031,6 +1032,8 @@ model Attendance {
   notes                    String?
   device                   Json?
   idempotencyKey           String?   @map("idempotency_key")
+  deletedAt                DateTime? @map("deleted_at")
+  checkOutAt               DateTime? @map("check_out_at")
   correctedBy              String?   @map("corrected_by") @db.Uuid
   correctionReason         String?   @map("correction_reason")
   createdAt                DateTime  @default(now()) @map("created_at")

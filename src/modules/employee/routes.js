@@ -87,13 +87,18 @@ employeeRouter.get("/attendance/locations", handle((req, res) => paged(res, "Emp
 employeeRouter.get("/attendance/status", handle((req, res) => send(res, "Employee check-in status loaded.", attendanceService.getCheckInStatus(req.user, req.query))));
 employeeRouter.get("/attendance/history", handle((req, res) => paged(res, "Employee attendance history loaded.", attendanceService.listMyHistory(req.user, req.query))));
 employeeRouter.post("/attendance/check-in", handle((req, res) => {
-  const result = attendanceService.createCheckIn(req.body || {}, req);
-  return res.status(result.created ? 201 : 200).json({
-    success: true,
-    message: result.created ? "Check-in recorded." : "Check-in already recorded.",
-    data: result.record,
-    meta: { idempotent: result.idempotent },
-  });
+  try {
+    const result = attendanceService.createCheckIn(req.body || {}, req);
+    return res.status(result.created ? 201 : 200).json({
+      success: true,
+      message: result.created ? "Check-in recorded." : "Check-in already recorded.",
+      data: result.record,
+      meta: { idempotent: result.idempotent },
+    });
+  } catch (error) {
+    attendanceService.auditCheckInRejected(req, error);
+    throw error;
+  }
 }));
 
 employeeRouter.get("/expenses", handle((req, res) => paged(res, "Employee expense claims loaded.", employeeService.listExpenses(req.user, req.query))));

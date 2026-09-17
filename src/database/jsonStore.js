@@ -36,10 +36,18 @@ function readCollection(collection) {
   return Array.isArray(parsed[collection]) ? parsed[collection] : [];
 }
 
-function writeCollection(collection, records) {
+function writeCollection(collection, records, options = {}) {
   const filePath = getCollectionPath(collection);
   const payload = JSON.stringify({ [collection]: records }, null, 2);
   fs.writeFileSync(filePath, `${payload}\n`, { mode: 0o600 });
+  if (!options.skipPersist) {
+    try {
+      const { queuePersist } = require("../modules/_shared/postgresRecords");
+      queuePersist(collection, records);
+    } catch (_error) {
+      // Persistence is best-effort; local write already succeeded.
+    }
+  }
 }
 
 function appendRecord(collection, record) {

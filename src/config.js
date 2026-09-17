@@ -45,6 +45,18 @@ function getRuntimeConfig() {
       windowMs: parseInteger(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
       max: parseInteger(process.env.RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 600),
       authMax: parseInteger(process.env.AUTH_RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 30),
+      checkInMax: parseInteger(process.env.CHECK_IN_RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 30),
+      pushMax: parseInteger(process.env.PUSH_RATE_LIMIT_MAX, process.env.NODE_ENV === "test" ? 10000 : 40),
+    },
+    attendance: {
+      defaultOpeningTime: process.env.ATTENDANCE_DEFAULT_OPENING_TIME || "08:50",
+      defaultLateAfterTime: process.env.ATTENDANCE_DEFAULT_LATE_AFTER_TIME || "09:30",
+      defaultClosingTime: process.env.ATTENDANCE_DEFAULT_CLOSING_TIME || "17:00",
+      locationRetentionDays: parseInteger(process.env.ATTENDANCE_LOCATION_RETENTION_DAYS, 365),
+    },
+    webPush: {
+      publicKey: process.env.WEB_PUSH_VAPID_PUBLIC_KEY || "",
+      subject: process.env.WEB_PUSH_VAPID_SUBJECT || "mailto:admin@example.com",
     },
     shutdownTimeoutMs: parseInteger(process.env.SHUTDOWN_TIMEOUT_MS, 10 * 1000),
   };

@@ -59,7 +59,13 @@ Run migrations or schema setup according to your PostgreSQL deployment plan befo
 
 Attendance check-in uses trusted server time, approved attendance locations, and backend Haversine distance checks. Store location radii in metres; the default is `3000`, and the configured maximum defaults to `5000`. A 3-5 km radius covers a large area, so choose the smallest operationally acceptable radius per location.
 
-Web Push requires HTTPS in production, a frontend service worker, and VAPID keys. Generate VAPID keys outside the repository, store only the public key in frontend-safe configuration, and keep `WEB_PUSH_VAPID_PRIVATE_KEY` in the deployment secret manager. The backend keeps in-app notifications available even when browser push permission is denied or unsupported.
+Web Push requires HTTPS in production, a frontend service worker, and VAPID keys. Generate VAPID keys outside the repository (`npx web-push generate-vapid-keys`), store only the public key in frontend-safe configuration, and keep `WEB_PUSH_VAPID_PRIVATE_KEY` in the deployment secret manager. The backend keeps in-app notifications available even when browser push permission is denied or unsupported.
+
+The API origin also serves `/check-in`, `/sw.js`, and `/manifest.webmanifest` for verification and as a drop-in PWA. The Vite frontend at `FRONTEND_URL` should copy `/pwa/js/web-push-client.js` and `/pwa/js/attendance-checkin.js` rather than prompting for notification permission on first page load.
+
+Default check-in opening time is `08:50` in the location IANA timezone. Precise employee coordinates should be retained no longer than `ATTENDANCE_LOCATION_RETENTION_DAYS` (default 365). Browser GPS can be spoofed; do not treat this check-in as spoof-proof.
+
+Job queue scaling: notification delivery uses the in-process worker in `src/workers/index.js` (one-minute poll, 25 jobs per tick). That is enough for a single API instance. Multiple instances can duplicate work; use a shared queue if volume grows.
 
 Deployment order:
 

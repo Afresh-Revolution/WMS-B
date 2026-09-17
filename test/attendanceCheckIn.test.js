@@ -16,6 +16,7 @@ const { hashPassword } = require("../src/auth/passwords");
 const { issueAccessToken } = require("../src/auth/tokens");
 const { readCollection, writeCollection } = require("../src/database/jsonStore");
 const attendanceService = require("../src/modules/attendance/service");
+const { withinRadius } = require("../src/modules/attendance/geo");
 
 function createTestApp(t) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "wms-attendance-checkin-"));
@@ -385,6 +386,12 @@ test("attendance helpers handle radius boundary and schedule opening rules", () 
     { latitude: 6.5244, longitude: 3.3792 }
   );
   assert.equal(distance, 0);
+  const boundary = withinRadius({
+    from: { latitude: 6.5244, longitude: 3.3792 },
+    to: { latitude: 6.55135, longitude: 3.3792 },
+    radiusMeters: 3000,
+  });
+  assert.equal(boundary.inside, boundary.distanceMeters <= 3000);
 
   const tooEarly = attendanceService.evaluateScheduleWindow(
     { openingTime: "08:00", lateAfterTime: "09:30", closingTime: "17:00", daysOfWeek: [2], timezone: "Africa/Lagos" },
@@ -412,4 +419,98 @@ test("attendance helpers handle radius boundary and schedule opening rules", () 
   );
   assert.equal(overnight.workDate, "2026-09-08");
   assert.equal(overnight.isOpen, true);
+
+  const defaultOpening = attendanceService.evaluateScheduleWindow(
+    { daysOfWeek: [2], timezone: "Africa/Lagos" },
+    new Date("2026-09-08T07:49:00.000Z")
+  );
+  assert.equal(attendanceService.DEFAULT_OPENING_TIME, "08:50");
+  assert.equal(defaultOpening.reason, "ATTENDANCE_NOT_OPEN");
+
+  const defaultOpen = attendanceService.evaluateScheduleWindow(
+    { daysOfWeek: [2], timezone: "Africa/Lagos" },
+    new Date("2026-09-08T07:50:00.000Z")
+  );
+  assert.equal(defaultOpen.isOpen, true);
+  assert.equal(defaultOpen.openingTime, "08:50");
+});
+
+test("attendance check-in rejects stale and low-accuracy GPS readings", async (t) => {
+  const app = createTestApp(t);
+  const server = app.listen(0);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const superadmin = createUser({
+    name: "Admin GPS",
+    email: "admin.gps@example.com",
+    passwordHash: hashPassword("password123"),
+    role: "superadmin",
+    status: "active",
+    organizationId: "org-1",
+  });
+  const employee = createUser({
+    name: "Employee GPS",
+    email: "employee.gps@example.com",
+    passwordHash: hashPassword("password123"),
+    role: "employee",
+    status: "active",
+    employeeId: "emp-gps",
+    departmentId: "dept-eng",
+    organizationId: "org-1",
+  });
+  seed("departments", [{ id: "dept-eng", name: "Engineering", organizationId: "org-1" }]);
+  seed("employees", [{ id: "emp-gps", fullName: "Employee GPS", userId: employee.id, departmentId: "dept-eng", organizationId: "org-1", status: "active" }]);
+
+  const locationResponse = await fetch(`${baseUrl}/api/v1/attendance/locations`, {
+    method: "POST",
+    headers: authHeaders(superadmin),
+    body: JSON.stringify({
+      name: "Lagos Office",
+      latitude: 6.5244,
+      longitude: 3.3792,
+      radiusMeters: 3000,
+      timezone: "Africa/Lagos",
+      organizationId: "org-1",
+      departmentId: "dept-eng",
+    }),
+  });
+  const location = await locationResponse.json();
+  const scheduleResponse = await fetch(`${baseUrl}/api/v1/attendance/schedules`, {
+    method: "POST",
+    headers: authHeaders(superadmin),
+    body: JSON.stringify({
+      name: "All-day",
+      openingTime: "00:00",
+      lateAfterTime: "09:30",
+      closingTime: "23:59",
+      daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+      organizationId: "org-1",
+      departmentId: "dept-eng",
+      locationIds: [location.data.id],
+    }),
+  });
+  const schedule = await scheduleResponse.json();
+
+  const stale = await fetch(`${baseUrl}/api/v1/attendance/check-in`, {
+    method: "POST",
+    headers: authHeaders(employee),
+    body: JSON.stringify(checkInPayload({
+      scheduleId: schedule.data.id,
+      locationTimestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    })),
+  });
+  assert.equal(stale.status, 422);
+  assert.equal((await stale.json()).error.code, "STALE_LOCATION_READING");
+
+  const inaccurate = await fetch(`${baseUrl}/api/v1/attendance/check-in`, {
+    method: "POST",
+    headers: authHeaders(employee),
+    body: JSON.stringify(checkInPayload({
+      scheduleId: schedule.data.id,
+      accuracyMeters: 250,
+    })),
+  });
+  assert.equal(inaccurate.status, 422);
+  assert.equal((await inaccurate.json()).error.code, "LOW_LOCATION_ACCURACY");
 });

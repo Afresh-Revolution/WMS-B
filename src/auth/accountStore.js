@@ -63,9 +63,25 @@ async function createUser(payload) {
   if (usingPostgres()) {
     const user = await postgresUserStore.createUser(payload);
     mirrorLocal(user, { passwordHash: payload.passwordHash, department: payload.department, jobTitle: payload.jobTitle });
+    return attachEmployeeProfile(user, payload);
+  }
+  return attachEmployeeProfile(localUserStore.createUser(payload), payload);
+}
+
+async function attachEmployeeProfile(user, extras = {}) {
+  if (!user) {
     return user;
   }
-  return localUserStore.createUser(payload);
+  try {
+    const { ensureEmployeeProfile } = require("../modules/employees/employeeProfile");
+    const profile = ensureEmployeeProfile(user, extras);
+    if (profile && !user.employeeId) {
+      return (await updateUser(user.id, { employeeId: profile.id })) || { ...user, employeeId: profile.id };
+    }
+  } catch (error) {
+    console.error("Failed to attach employee profile:", error.message);
+  }
+  return user;
 }
 
 async function createSuperadmin(payload) {
@@ -148,6 +164,12 @@ async function syncAllUsersToSupabase({ logger = console } = {}) {
   }
 
   logger.log(`Synced ${synced} local users into Supabase and mirrored ${mirrored} accounts locally.`);
+  try {
+    const { ensureEmployeeProfilesForUsers } = require("../modules/employees/employeeProfile");
+    ensureEmployeeProfilesForUsers(await postgresUserStore.listUsers());
+  } catch (error) {
+    logger.error?.("Failed to ensure employee profiles after user sync:", error.message);
+  }
   return { enabled: true, synced, mirrored };
 }
 

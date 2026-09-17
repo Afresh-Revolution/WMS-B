@@ -7,9 +7,10 @@ const test = require("node:test");
 process.env.NODE_ENV = "test";
 process.env.AUTH_TOKEN_SECRET = "test-secret-that-is-long-enough-for-leave-module";
 process.env.SUPERADMIN_SETUP_TOKEN = "setup-token";
+delete process.env.DATABASE_URL;
 
 const { issueAccessToken } = require("../src/auth/tokens");
-const { getUserById } = require("../src/auth/userStore");
+const { getUserById, updateUser } = require("../src/auth/userStore");
 const { createApp } = require("../src/app");
 
 function createTestApp(t) {
@@ -132,4 +133,67 @@ test("calculates leave duration, blocks overlaps, approves, and moves balance da
   assert.equal(approved.meta.balance.pendingDays, 0);
   assert.equal(approved.meta.balance.usedDays, 4);
   assert.equal(approved.meta.balance.remainingDays, 21);
+});
+
+test("a user created through POST /api/v1/users can apply leave on employee routes", async (t) => {
+  const app = createTestApp(t);
+  const server = app.listen(0);
+  t.after(() => server.close());
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auth = await bootstrapSuperadmin(baseUrl);
+  const adminHeaders = {
+    "content-type": "application/json",
+    authorization: `Bearer ${auth.token}`,
+  };
+
+  const createUserResponse = await fetch(`${baseUrl}/api/v1/users`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      fullName: "Plangnan Nungse",
+      email: "nungseplangnan0000@example.com",
+      role: "employee",
+      status: "active",
+      temporaryPassword: "TempPass123!",
+    }),
+  });
+  assert.equal(createUserResponse.status, 201);
+  const createdUser = await createUserResponse.json();
+  assert.ok(createdUser.data.id);
+  assert.ok(createdUser.data.employeeId);
+  updateUser(createdUser.data.id, { mustChangePassword: false, forcePasswordReset: false });
+
+  const employeeUser = getUserById(createdUser.data.id);
+  const employeeHeaders = {
+    "content-type": "application/json",
+    authorization: `Bearer ${issueAccessToken(employeeUser)}`,
+  };
+
+  const leaveTypesResponse = await fetch(`${baseUrl}/api/v1/employee/leave/types`, { headers: employeeHeaders });
+  assert.equal(leaveTypesResponse.status, 200);
+  const leaveTypes = await leaveTypesResponse.json();
+  const annualLeave = leaveTypes.data.find((leaveType) => leaveType.code === "ANNUAL");
+  assert.ok(annualLeave);
+
+  const applyResponse = await fetch(`${baseUrl}/api/v1/employee/leave`, {
+    method: "POST",
+    headers: employeeHeaders,
+    body: JSON.stringify({
+      leaveTypeId: annualLeave.id,
+      startDate: "2026-09-21",
+      endDate: "2026-09-22",
+      note: "Personal time",
+    }),
+  });
+  assert.equal(applyResponse.status, 201);
+  const applied = await applyResponse.json();
+  assert.equal(applied.data.status, "PENDING");
+  assert.equal(applied.data.employeeId, createdUser.data.employeeId);
+
+  const listResponse = await fetch(`${baseUrl}/api/v1/employee/leave`, { headers: employeeHeaders });
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  assert.equal(listed.data.length, 1);
+  assert.equal(listed.data[0].id, applied.data.id);
 });

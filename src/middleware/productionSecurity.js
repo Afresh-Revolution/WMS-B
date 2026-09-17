@@ -3,7 +3,7 @@ function securityHeadersMiddleware(_config = {}) {
     res.setHeader("x-content-type-options", "nosniff");
     res.setHeader("x-frame-options", "DENY");
     res.setHeader("referrer-policy", "no-referrer");
-    res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=(self)");
     res.setHeader("cross-origin-resource-policy", "same-site");
     res.setHeader("cache-control", "no-store");
     return next();
@@ -55,9 +55,14 @@ function rateLimitMiddleware(config = {}) {
 
     const now = Date.now();
     const isAuthPath = req.path.includes("/auth/") || req.path.includes("/superadmin/login") || req.path.includes("/superadmin/bootstrap");
-    const max = isAuthPath ? authMax : defaultMax;
+    const isCheckInPath = req.path.includes("/check-in");
+    const isPushPath = req.path.includes("/push/subscribe") || req.path.includes("/push/unsubscribe");
+    const checkInMax = config.checkInMax || 30;
+    const pushMax = config.pushMax || 40;
+    const bucketKind = isAuthPath ? "auth" : isCheckInPath ? "check-in" : isPushPath ? "push" : "api";
+    const max = isAuthPath ? authMax : isCheckInPath ? checkInMax : isPushPath ? pushMax : defaultMax;
     const identity = req.ip || req.socket?.remoteAddress || "unknown";
-    const key = `${identity}:${isAuthPath ? "auth" : "api"}`;
+    const key = `${identity}:${bucketKind}`;
     const bucket = buckets.get(key);
 
     if (!bucket || bucket.resetAt <= now) {

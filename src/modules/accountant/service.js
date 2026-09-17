@@ -89,16 +89,8 @@ function valueOf(record, keys) {
 }
 
 function getActorEmployee(user) {
-  const employeeId = user?.employeeId || user?.employee_id;
-  return (
-    activeRecords("employees").find((employee) =>
-      employee.id === employeeId ||
-      employee.employeeId === employeeId ||
-      employee.employee_id === employeeId ||
-      employee.userId === user?.id ||
-      employee.user_id === user?.id
-    ) || null
-  );
+  const { resolveEmployeeForUser } = require("../employees/employeeProfile");
+  return resolveEmployeeForUser(user);
 }
 
 function getOrganizationId(user, employee = null) {

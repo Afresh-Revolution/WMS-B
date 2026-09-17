@@ -166,3 +166,57 @@ test("notification center and push subscriptions are self-scoped and idempotent"
   assert.equal(unsubscribeResponse.status, 200);
   assert.ok(readCollection("push_subscriptions").find((record) => record.id === subscription.data.id).revokedAt);
 });
+
+test("expired push subscriptions are disabled and destinations stay internal", async (t) => {
+  const previous = process.env.WEB_PUSH_MOCK_DELIVERY;
+  process.env.WEB_PUSH_MOCK_DELIVERY = "gone";
+  t.after(() => {
+    process.env.WEB_PUSH_MOCK_DELIVERY = previous;
+  });
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "wms-web-push-expired-"));
+  process.env.DATA_DIR = dataDir;
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  const user = createUser({
+    name: "Expired Push",
+    email: "expired.push@example.com",
+    passwordHash: hashPassword("password123"),
+    role: "employee",
+    status: "active",
+    organizationId: "org-1",
+  });
+  notificationService.subscribePush(user, subscriptionPayload("https://push.example.com/expired"));
+  notificationService.send({
+    userId: user.id,
+    type: "MESSAGE_RECEIVED",
+    title: "Inbox",
+    message: "Hello",
+    destinationUrl: "/messages",
+    channels: ["in_app", "push"],
+  });
+  await notificationService.processQueue(10);
+  const subscription = readCollection("push_subscriptions")[0];
+  assert.ok(subscription.disabledAt || subscription.disabled_at);
+
+  assert.equal(notificationService.normalizeDestinationUrl("/employee/attendance"), "/employee/attendance");
+  assert.throws(() => notificationService.normalizeDestinationUrl("/evil"), /internal route/);
+  assert.equal(notificationService.retryDelayMs(1), 60 * 1000);
+  assert.equal(notificationService.retryDelayMs(3), 4 * 60 * 1000);
+});
+
+test("serves PWA check-in assets", async (t) => {
+  const app = createTestApp(t);
+  const server = app.listen(0);
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const page = await fetch(`${baseUrl}/check-in`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Check in/);
+
+  const worker = await fetch(`${baseUrl}/sw.js`);
+  assert.equal(worker.status, 200);
+  assert.equal(worker.headers.get("service-worker-allowed"), "/");
+  assert.match(await worker.text(), /push/);
+});

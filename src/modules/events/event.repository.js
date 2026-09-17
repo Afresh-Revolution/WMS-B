@@ -232,7 +232,8 @@ function listEmployees() {
 }
 
 function findEmployeeByUserId(userId) {
-  return activeRecords("employees").find((employee) => employee.userId === userId || employee.user_id === userId) || null;
+  const { resolveEmployeeForUserId } = require("../employees/employeeProfile");
+  return resolveEmployeeForUserId(userId);
 }
 
 function findDepartment(id) {

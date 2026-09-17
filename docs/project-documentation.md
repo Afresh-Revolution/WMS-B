@@ -263,7 +263,7 @@ Detailed endpoint documentation:
 The attendance and notification backend supports:
 
 - Approved attendance locations with configurable radius in metres
-- Attendance schedules with `08:00` default opening time and `09:30` late-after time
+- Attendance schedules with `08:50` default opening time and `09:30` late-after time
 - Server-time and IANA-timezone schedule evaluation
 - Fresh browser geolocation submission with backend Haversine distance checks
 - Duplicate check-in protection by employee, schedule, and work date

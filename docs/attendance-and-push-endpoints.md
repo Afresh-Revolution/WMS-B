@@ -221,7 +221,7 @@ Create schedule request:
 ```json
 {
   "name": "Weekday Office Check-in",
-  "openingTime": "08:00",
+  "openingTime": "08:50",
   "lateAfterTime": "09:30",
   "closingTime": "17:00",
   "daysOfWeek": [1, 2, 3, 4, 5],
@@ -233,7 +233,7 @@ Create schedule request:
 }
 ```
 
-Times use `HH:mm` in the schedule/location IANA timezone. New schedules default to opening at `08:00`, late after `09:30`, and closing at `17:00` unless the administrator saves different values. Existing saved schedules keep their stored times until edited. The backend uses trusted server time and stores check-in timestamps in UTC.
+Times use `HH:mm` in the schedule/location IANA timezone. New schedules default to opening at `08:50`, late after `09:30`, and closing at `17:00` unless the administrator saves different values. Existing saved schedules keep their stored times until edited. The backend uses trusted server time and stores check-in timestamps in UTC.
 
 ## Attendance Reports
 
@@ -274,6 +274,41 @@ ATTENDANCE_MIN_RADIUS_METERS=10
 ATTENDANCE_MAX_RADIUS_METERS=5000
 ATTENDANCE_MAX_GPS_ACCURACY_METERS=100
 ATTENDANCE_MAX_LOCATION_AGE_SECONDS=300
+ATTENDANCE_DEFAULT_OPENING_TIME=08:50
+ATTENDANCE_LOCATION_RETENTION_DAYS=365
+CHECK_IN_RATE_LIMIT_MAX=30
+PUSH_RATE_LIMIT_MAX=40
 ```
 
-Do not commit generated VAPID private keys. Web Push delivery requires HTTPS in production. iPhone/iPad browser support depends on installation and operating-system support; the in-app notification centre remains available when Web Push is denied or unsupported.
+Generate development VAPID keys outside Git:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Copy the public key to `WEB_PUSH_VAPID_PUBLIC_KEY` and keep the private key only in the environment. Never commit generated secrets.
+
+## PWA And Frontend Helpers
+
+This repository is the API. It also serves a minimum PWA so check-in and push can be verified without a separate frontend:
+
+| Path | Purpose |
+| --- | --- |
+| `/check-in` | Employee check-in page. Requests geolocation only after **Use my location**. |
+| `/sw.js` | Push and notification-click service worker. Destinations are restricted to internal routes. |
+| `/manifest.webmanifest` | Installable web app manifest. |
+| `/pwa/js/attendance-checkin.js` | Client helper the Vite frontend can copy. |
+| `/pwa/js/web-push-client.js` | Push opt-in helper. Does not prompt on first page load. |
+
+Production Web Push requires HTTPS. iPhone/iPad browsers typically need Home Screen installation. The in-app notification centre remains available when push is denied or unsupported.
+
+## GPS Accuracy And Privacy
+
+- The backend does **not** enlarge the approved radius because GPS accuracy is poor.
+- Readings older than `ATTENDANCE_MAX_LOCATION_AGE_SECONDS` (default 300) are rejected.
+- Accuracy worse than `ATTENDANCE_MAX_GPS_ACCURACY_METERS` (default 100) is rejected.
+- Precise coordinates are stored for audit, omitted from self-service responses, and never included in push payloads.
+- Retain precise location evidence for `ATTENDANCE_LOCATION_RETENTION_DAYS` (default 365) then delete or anonymise it according to policy.
+- Browser geolocation can be spoofed. This release flags suspicious readings (`ZERO_ACCURACY`, `IMPOSSIBLE_TRAVEL`, `EXACT_OFFICE_COORDINATE`, `CLIENT_TIMEZONE_MISMATCH`) and is structured so QR, selfie, or trusted-network checks can be added later.
+
+Do not commit generated VAPID private keys.

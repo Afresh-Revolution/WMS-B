@@ -210,16 +210,8 @@ function selfRecords(collection, scope, keys) {
 }
 
 function getActorEmployee(user) {
-  const userEmployeeId = user?.employeeId || user?.employee_id;
-  return (
-    activeRecords("employees").find((employee) =>
-      employee.id === userEmployeeId ||
-      employee.employeeId === userEmployeeId ||
-      employee.employee_id === userEmployeeId ||
-      employee.userId === user?.id ||
-      employee.user_id === user?.id
-    ) || null
-  );
+  const { resolveEmployeeForUser } = require("../employees/employeeProfile");
+  return resolveEmployeeForUser(user);
 }
 
 function getOrganizationId(user, employee = null) {

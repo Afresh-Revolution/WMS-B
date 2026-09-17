@@ -4248,7 +4248,7 @@ create table if not exists attendance_schedules (
   location_ids jsonb not null default '[]'::jsonb,
   name text not null,
   description text,
-  opening_time text not null default '08:00',
+  opening_time text not null default '08:50',
   late_after_time text not null default '09:30',
   closing_time text not null default '17:00',
   days_of_week jsonb not null default '[1,2,3,4,5]'::jsonb,
@@ -4305,3 +4305,33 @@ create index if not exists idx_attendance_org_work_date
   on attendance(organization_id, work_date desc);
 create index if not exists idx_attendance_location_work_date
   on attendance(location_id, work_date desc);
+
+-- Additive check-in / web-push hardening (safe to re-run).
+alter table attendance add column if not exists deleted_at timestamptz;
+alter table attendance add column if not exists check_out_at timestamptz;
+alter table attendance_schedules alter column opening_time set default '08:50';
+
+create index if not exists idx_notifications_org_created
+  on notifications(organization_id, created_at desc);
+create index if not exists idx_notifications_user_unread
+  on notifications(user_id, is_read, created_at desc)
+  where deleted_at is null;
+create index if not exists idx_notifications_recipient_created
+  on notifications(recipient_user_id, created_at desc)
+  where deleted_at is null;
+
+-- Rollback notes:
+-- 1. New indexes may be dropped with DROP INDEX IF EXISTS.
+-- 2. Do not drop attendance or notifications columns if production rows exist.
+-- 3. Restore opening_time default to the previous value only if operators require it.
+
+create table if not exists operational_records (
+  id uuid primary key default gen_random_uuid(),
+  collection text not null,
+  record_id text not null,
+  payload jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  unique (collection, record_id)
+);
+create index if not exists idx_operational_records_collection
+  on operational_records(collection, updated_at desc);

@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const path = require("path");
 const { superadminRouter } = require("./routes/superadminAuth");
 const { createApiV1Router } = require("./modules/apiV1");
 const { emailConfigRouter } = require("./modules/email/email.routes");
@@ -51,6 +52,23 @@ function createApp() {
   app.use(apiMetricsMiddleware);
   app.use(technicalAuditMiddleware);
 
+  const publicDir = path.join(__dirname, "..", "public");
+  app.get("/sw.js", (_req, res) => {
+    res.setHeader("content-type", "application/javascript; charset=utf-8");
+    res.setHeader("service-worker-allowed", "/");
+    res.setHeader("cache-control", "no-cache");
+    return res.sendFile(path.join(publicDir, "sw.js"));
+  });
+  app.get("/manifest.webmanifest", (_req, res) => {
+    res.setHeader("content-type", "application/manifest+json; charset=utf-8");
+    return res.sendFile(path.join(publicDir, "manifest.webmanifest"));
+  });
+  app.get("/check-in", (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    return res.sendFile(path.join(publicDir, "check-in.html"));
+  });
+  app.use("/pwa", express.static(publicDir, { index: false, maxAge: "1h" }));
+
   app.get("/", (_req, res) => {
     res.json({
       name: "wms-api",
@@ -67,6 +85,8 @@ function createApp() {
         secretary: "/api/v1/secretary/dashboard",
         accountant: "/api/v1/accountant/dashboard",
         attendance: "/api/v1/attendance/me/status",
+        checkIn: "/check-in",
+        webPush: "/api/v1/notifications/push/public-key",
       },
     });
   });

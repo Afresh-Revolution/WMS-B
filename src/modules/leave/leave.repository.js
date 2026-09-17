@@ -239,11 +239,20 @@ function normalizePolicyPayload(payload, actorId, withDefaults = false) {
 }
 
 function findEmployeeById(id) {
-  return getCollection("employees").find((employee) => employee.id === id) || null;
+  if (!id) {
+    return null;
+  }
+  const { findEmployeeForUser } = require("../employees/employeeProfile");
+  return (
+    getCollection("employees").find((employee) => employee.id === id || employee.employeeId === id || employee.employee_id === id) ||
+    findEmployeeForUser({ id, employeeId: id }) ||
+    null
+  );
 }
 
 function findEmployeeByUserId(userId) {
-  return getCollection("employees").find((employee) => employee.userId === userId || employee.user_id === userId) || null;
+  const { resolveEmployeeForUserId } = require("../employees/employeeProfile");
+  return resolveEmployeeForUserId(userId);
 }
 
 function listEmployees() {
