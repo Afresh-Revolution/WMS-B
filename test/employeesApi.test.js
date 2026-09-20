@@ -69,6 +69,9 @@ test("super admin can list and add people through POST /api/v1/employees", async
   assert.ok(created.data.userId);
   assert.equal(created.data.jobPosition, "Hardware Lead");
   assert.equal(created.data.department, "Hardware");
+  assert.equal(created.data.location, "Remote");
+  assert.equal(created.data.locationType, "remote");
+  assert.notEqual(created.data.location, created.data.id);
   assert.ok(created.meta.temporaryPassword);
 
   const listResponse = await fetch(`${baseUrl}/api/v1/employees`, { headers });

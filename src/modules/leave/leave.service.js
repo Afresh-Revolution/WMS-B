@@ -47,6 +47,70 @@ function requireEmployeeForUser(user) {
   return employee;
 }
 
+function normalizePersonName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function canActOnBehalf(user) {
+  return user?.role === "superadmin" || hasPermission(user, LEAVE_PERMISSIONS.VIEW_ALL);
+}
+
+function resolveLeaveEmployee(payload, user) {
+  const actingFor = payload.employeeId || payload.employee_id || payload.userId || payload.user_id;
+  const name = payload.fullName || payload.name || payload.employeeName || payload.employee_name;
+  const department = payload.departmentId || payload.department_id || payload.department;
+  if (canActOnBehalf(user) && (actingFor || name)) {
+    if (actingFor) {
+      const byId = repository.findEmployeeById(actingFor);
+      if (byId) {
+        return byId;
+      }
+      const { findEmployeeForUser } = require("../employees/employeeProfile");
+      const { getUserById } = require("../../auth/userStore");
+      const linked = findEmployeeForUser(getUserById(actingFor) || { id: actingFor, employeeId: actingFor });
+      if (linked) {
+        return linked;
+      }
+    }
+    if (name) {
+      const wanted = normalizePersonName(name);
+      const wantedDept = String(department || "").trim().toLowerCase();
+      const match = repository.listEmployees().find((employee) => {
+        const sameName = normalizePersonName(getEmployeeDisplayName(employee)) === wanted;
+        if (!sameName) {
+          return false;
+        }
+        if (!wantedDept) {
+          return true;
+        }
+        return (
+          String(employee.departmentId || "").toLowerCase() === wantedDept ||
+          String(employee.department_id || "").toLowerCase() === wantedDept ||
+          String(employee.department || "").toLowerCase() === wantedDept
+        );
+      });
+      if (!match) {
+        throw createHttpError(404, "No employee was found with that name and department.", "EMPLOYEE_NOT_FOUND");
+      }
+      return match;
+    }
+    throw createHttpError(404, "Employee profile was not found for this leave request.", "EMPLOYEE_NOT_FOUND");
+  }
+
+  if (user?.role === "superadmin") {
+    throw createHttpError(400, "Name and department are required to apply leave for a staff member.", "NAME_AND_DEPARTMENT_REQUIRED");
+  }
+
+  return requireEmployeeForUser(user);
+}
+
+function findActiveLeave(employeeId) {
+  return repository.listAllRequests({ employeeId }).find((request) => [LEAVE_STATUS.PENDING, LEAVE_STATUS.APPROVED].includes(normalizeStatus(request.status)));
+}
+
 function canViewAll(user) {
   return user?.role === "superadmin" || hasPermission(user, LEAVE_PERMISSIONS.VIEW_ALL) || hasPermission(user, LEAVE_PERMISSIONS.VIEW);
 }
@@ -111,7 +175,7 @@ function saveRecalculatedBalance(balance, updates) {
 }
 
 function getLeaveTypeOrThrow(id) {
-  const leaveType = repository.findLeaveType(id);
+  const leaveType = repository.findLeaveType(id) || repository.findLeaveTypeByCode(id);
   if (!leaveType) {
     throw createHttpError(404, "Leave type was not found.", "LEAVE_TYPE_NOT_FOUND");
   }
@@ -226,8 +290,16 @@ function createLeaveRequest(payload, user, req) {
     throw createHttpError(403, "Forbidden.", "FORBIDDEN");
   }
 
-  const employee = requireEmployeeForUser(user);
-  const leaveType = getLeaveTypeOrThrow(payload.leaveTypeId || payload.leave_type_id);
+  const employee = resolveLeaveEmployee(payload, user);
+  const extensionOf = payload.extendRequestId || payload.extend_request_id || payload.extensionOf || payload.existingLeaveId;
+  if (extensionOf) {
+    return requestLeaveExtension(extensionOf, payload, user);
+  }
+  const activeLeave = findActiveLeave(employee.id);
+  if (activeLeave) {
+    throw createHttpError(409, "This staff member already has an active leave request. Request an extension instead of a new leave.", "LEAVE_ALREADY_ACTIVE");
+  }
+  const leaveType = getLeaveTypeOrThrow(payload.leaveTypeId || payload.leave_type_id || payload.leaveType || "ANNUAL");
   const policy = repository.findPolicyForLeaveType(leaveType.id);
   const startDate = payload.startDate || payload.start_date;
   const endDate = payload.endDate || payload.end_date;
@@ -329,7 +401,7 @@ function getLeaveRequest(id, user) {
   }
 
   const visible = getVisibleRequests(user, { id, limit: 1 }).data.some((item) => item.id === id);
-  return visible ? request : null;
+  return visible ? { ...request, extensions: repository.listExtensions(id) } : null;
 }
 
 function isAuthorizedApprover(request, user) {
@@ -718,8 +790,166 @@ function getReports(user, query = {}) {
   };
 }
 
+function requestLeaveExtension(id, payload, user) {
+  const request = repository.findRequest(id);
+  if (!request) {
+    throw createHttpError(404, "Leave request was not found.", "LEAVE_REQUEST_NOT_FOUND");
+  }
+  const status = normalizeStatus(request.status);
+  if (![LEAVE_STATUS.PENDING, LEAVE_STATUS.APPROVED].includes(status)) {
+    throw createHttpError(409, "Only pending or approved leave can be extended.", "LEAVE_CANNOT_EXTEND");
+  }
+  const employee = repository.findEmployeeById(request.employeeId);
+  const actor = getActorEmployee(user);
+  const ownsRequest = Boolean(actor && actor.id === request.employeeId);
+  if (!ownsRequest && !canActOnBehalf(user)) {
+    throw createHttpError(403, "Forbidden.", "FORBIDDEN");
+  }
+  const pending = repository.listExtensions(id).find((item) => normalizeStatus(item.status) === "PENDING");
+  if (pending) {
+    throw createHttpError(409, "An extension is already waiting for approval.", "LEAVE_EXTENSION_PENDING");
+  }
+  const newEndDate = payload.endDate || payload.end_date || payload.newEndDate || payload.new_end_date;
+  if (!newEndDate || newEndDate <= request.endDate) {
+    throw createHttpError(400, "Extension end date must be after the current leave end date.", "INVALID_LEAVE_EXTENSION");
+  }
+  const leaveType = getLeaveTypeOrThrow(request.leaveTypeId);
+  const policy = repository.findPolicyForLeaveType(leaveType.id);
+  const extra = calculateLeaveDuration({
+    startDate: request.endDate,
+    endDate: newEndDate,
+    durationType: request.durationType || DURATION_TYPE.FULL_DAY,
+    policy,
+    holidays: repository.getHolidaysBetween(request.endDate, newEndDate),
+  });
+  const extraDays = Math.max(0, extra.workingDays - 1);
+  if (extraDays <= 0) {
+    throw createHttpError(400, "Extension must add at least one working day.", "INVALID_LEAVE_EXTENSION");
+  }
+  const year = getYearFromDate(request.startDate);
+  const balance = getOrCreateBalance(employee, leaveType, policy, year);
+  if (balance.remainingDays < extraDays) {
+    throw createHttpError(409, "Insufficient leave balance.", "INSUFFICIENT_LEAVE_BALANCE");
+  }
+  const extension = repository.createExtension({
+    leaveRequestId: request.id,
+    employeeId: request.employeeId,
+    previousEndDate: request.endDate,
+    newEndDate,
+    extraDays,
+    note: payload.note || payload.reason || null,
+    status: "PENDING",
+    requestedBy: user.id,
+  });
+  repository.updateLeaveRequest(request.id, { pendingExtensionId: extension.id, extensionStatus: "PENDING" });
+  repository.createHistory({
+    leaveRequestId: request.id,
+    employeeId: request.employeeId,
+    actorId: user.id,
+    action: "LEAVE_EXTENSION_REQUESTED",
+    status: request.status,
+    oldValue: { endDate: request.endDate },
+    newValue: extension,
+    comment: extension.note,
+  });
+  return { request: { ...repository.findRequest(request.id), extensions: repository.listExtensions(request.id) }, extension, record: extension };
+}
+
+function approveLeaveExtension(id, payload, user) {
+  if (!hasPermission(user, LEAVE_PERMISSIONS.APPROVE) && user?.role !== "superadmin") {
+    throw createHttpError(403, "Forbidden.", "FORBIDDEN");
+  }
+  const request = repository.findRequest(id);
+  if (!request) {
+    return null;
+  }
+  if (!isAuthorizedApprover(request, user)) {
+    throw createHttpError(403, "Approver is not authorized for this leave request.", "APPROVER_NOT_AUTHORIZED");
+  }
+  const extension =
+    repository.findExtension(payload.extensionId || payload.extension_id) ||
+    repository.listExtensions(id).find((item) => normalizeStatus(item.status) === "PENDING");
+  if (!extension || extension.leaveRequestId !== request.id) {
+    throw createHttpError(404, "Leave extension was not found.", "LEAVE_EXTENSION_NOT_FOUND");
+  }
+  const leaveType = getLeaveTypeOrThrow(request.leaveTypeId);
+  const policy = repository.findPolicyForLeaveType(leaveType.id);
+  const employee = repository.findEmployeeById(request.employeeId);
+  const year = getYearFromDate(request.startDate);
+  const balance = getOrCreateBalance(employee, leaveType, policy, year);
+  if (balance.remainingDays < toNumber(extension.extraDays)) {
+    throw createHttpError(409, "Insufficient leave balance.", "INSUFFICIENT_LEAVE_BALANCE");
+  }
+  const updatedExtension = repository.updateExtension(extension.id, {
+    status: "APPROVED",
+    approvedAt: new Date().toISOString(),
+    approvedBy: user.id,
+    comment: payload.comment || null,
+  });
+  const extraDays = toNumber(extension.extraDays);
+  const updatedRequest = repository.updateLeaveRequest(request.id, {
+    endDate: extension.newEndDate,
+    duration: toNumber(request.duration) + extraDays,
+    calendarDays: toNumber(request.calendarDays) + extraDays,
+    pendingExtensionId: null,
+    extensionStatus: "APPROVED",
+  });
+  const updatedBalance = saveRecalculatedBalance(balance, normalizeStatus(request.status) === LEAVE_STATUS.APPROVED
+    ? { usedDays: balance.usedDays + extraDays }
+    : { pendingDays: balance.pendingDays + extraDays });
+  repository.createHistory({
+    leaveRequestId: request.id,
+    employeeId: request.employeeId,
+    actorId: user.id,
+    action: "LEAVE_EXTENSION_APPROVED",
+    status: updatedRequest.status,
+    oldValue: { endDate: request.endDate },
+    newValue: updatedExtension,
+    comment: payload.comment || null,
+  });
+  return { record: { ...updatedRequest, extensions: repository.listExtensions(id) }, extension: updatedExtension, balance: updatedBalance };
+}
+
+function rejectLeaveExtension(id, payload, user) {
+  if (!hasPermission(user, LEAVE_PERMISSIONS.REJECT) && user?.role !== "superadmin") {
+    throw createHttpError(403, "Forbidden.", "FORBIDDEN");
+  }
+  const request = repository.findRequest(id);
+  if (!request) {
+    return null;
+  }
+  if (!isAuthorizedApprover(request, user)) {
+    throw createHttpError(403, "Approver is not authorized for this leave request.", "APPROVER_NOT_AUTHORIZED");
+  }
+  const extension =
+    repository.findExtension(payload.extensionId || payload.extension_id) ||
+    repository.listExtensions(id).find((item) => normalizeStatus(item.status) === "PENDING");
+  if (!extension || extension.leaveRequestId !== request.id) {
+    throw createHttpError(404, "Leave extension was not found.", "LEAVE_EXTENSION_NOT_FOUND");
+  }
+  const updatedExtension = repository.updateExtension(extension.id, {
+    status: "REJECTED",
+    rejectedAt: new Date().toISOString(),
+    rejectedBy: user.id,
+    comment: payload.comment || payload.reason || null,
+  });
+  const updatedRequest = repository.updateLeaveRequest(request.id, { pendingExtensionId: null, extensionStatus: "REJECTED" });
+  repository.createHistory({
+    leaveRequestId: request.id,
+    employeeId: request.employeeId,
+    actorId: user.id,
+    action: "LEAVE_EXTENSION_REJECTED",
+    status: request.status,
+    oldValue: extension,
+    newValue: updatedExtension,
+    comment: payload.comment || payload.reason || null,
+  });
+  return { record: { ...updatedRequest, extensions: repository.listExtensions(id) }, extension: updatedExtension };
+}
+
 module.exports = {
   adjustBalance,
+  approveLeaveExtension,
   approveLeaveRequest,
   cancelLeaveRequest,
   createLeaveRequest,
@@ -734,7 +964,9 @@ module.exports = {
   listLeaveTypes,
   listPolicies,
   getVisibleRequests,
+  rejectLeaveExtension,
   rejectLeaveRequest,
+  requestLeaveExtension,
   updateLeaveType,
   updatePolicy,
   withdrawLeaveRequest,

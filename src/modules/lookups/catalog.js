@@ -106,22 +106,56 @@ function listRoleOptions() {
     .map((role) => ({ key: role.key, name: role.name }));
 }
 
+const LOCATION_TYPES = Object.freeze([
+  { key: "onsite", label: "Onsite" },
+  { key: "remote", label: "Remote" },
+]);
+
+function looksLikeRecordId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function normalizeWorkLocation(payload = {}) {
+  const requestedType = String(payload.locationType || payload.location_type || payload.workMode || payload.work_mode || "").trim().toLowerCase();
+  const rawLocation = String(payload.location || payload.workLocation || payload.work_location || "").trim();
+  const location = looksLikeRecordId(rawLocation) ? "" : rawLocation;
+  if (requestedType === "remote" || location.toLowerCase() === "remote") {
+    return { locationType: "remote", location: location && location.toLowerCase() !== "remote" ? location : "Remote" };
+  }
+  if (requestedType === "onsite" || location) {
+    return { locationType: "onsite", location: location || null };
+  }
+  return { locationType: null, location: null };
+}
+
+function displayLocation(record = {}) {
+  const normalized = normalizeWorkLocation(record);
+  if (normalized.locationType === "remote") {
+    return normalized.location || "Remote";
+  }
+  return normalized.location || null;
+}
+
 function getLookups() {
   return {
     departments: listDepartmentOptions(),
     employmentTypes: listEmploymentTypes(),
     roles: listRoleOptions(),
+    locationTypes: LOCATION_TYPES,
   };
 }
 
 module.exports = {
   DEFAULT_DEPARTMENTS,
   EMPLOYMENT_TYPES,
+  LOCATION_TYPES,
+  displayLocation,
   ensureDefaultDepartments,
   getLookups,
   listDepartmentOptions,
   listEmploymentTypes,
   listRoleOptions,
+  normalizeWorkLocation,
   resolveDepartment,
   resolveEmploymentType,
 };

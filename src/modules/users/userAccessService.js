@@ -171,7 +171,11 @@ function ensureCanManageUser(actor, targetUser, action) {
 }
 
 function ensureCanCreateRole(actor, role) {
-  if (role.key === "superadmin" && actor.role !== "superadmin") {
+  const actorRole = String(actor?.role || "").toLowerCase();
+  if (!["superadmin", "manager", "hr"].includes(actorRole)) {
+    throw createHttpError(403, "Only Super Admin, Manager, and HR can add users.", "FORBIDDEN");
+  }
+  if (role.key === "superadmin" && actorRole !== "superadmin") {
     throw createHttpError(403, "Only Super Admin can create another Super Admin.", "FORBIDDEN");
   }
 }

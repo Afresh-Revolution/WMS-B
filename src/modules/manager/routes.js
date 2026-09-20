@@ -1,6 +1,11 @@
 const express = require("express");
 const managerService = require("./service");
 const { authenticate } = require("../../auth/middleware");
+const announcementService = require("../announcements/service");
+const { getLookups } = require("../lookups/catalog");
+const nyscInternService = require("../nyscIntern/nyscIntern.service");
+const payrollService = require("../payroll/payroll.service");
+const { vendorsRouter } = require("../vendors/routes");
 
 const managerRouter = express.Router();
 
@@ -76,7 +81,25 @@ managerRouter.patch("/leave/:id/reject", handle((req, res) => {
   return result ? send(res, "Manager leave rejected.", result.record) : notFound(res, "LEAVE_REQUEST_NOT_FOUND");
 }));
 
+function sendClockIn(res, result) {
+  return res.status(result.created ? 201 : 200).json({
+    success: true,
+    message: result.created ? "Clock-in recorded." : "Clock-in already recorded.",
+    data: result.record,
+    meta: { idempotent: !result.created },
+  });
+}
+
 managerRouter.get("/attendance", handle((req, res) => paged(res, "Manager attendance loaded.", managerService.listAttendance(req.user, req.query))));
+managerRouter.post("/attendance", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/clock-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/clockIn", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/check-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/clock-out", handle((req, res) => {
+  const result = managerService.clockOutSelf(req.body || {}, req);
+  return send(res, "Clock-out recorded.", result.record);
+}));
+managerRouter.post("/clock-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.get("/attendance/:id", handle((req, res) => {
   const record = managerService.getScopedRecord("attendance", req.params.id, req.user, { permission: "attendance.view" });
   return record ? send(res, "Manager attendance record loaded.", record) : notFound(res, "ATTENDANCE_NOT_FOUND");
@@ -206,7 +229,20 @@ managerRouter.get("/expenses", handle((req, res) => {
   const scope = managerService.buildScope(req.user);
   return paged(res, "Manager expenses loaded.", managerService.listScoped("expenses", req.query, scope, { allowCreatedBy: true }));
 }));
-managerRouter.post("/expenses", handle((req, res) => res.status(201).json({ success: true, message: "Manager expense created.", data: managerService.createScopedRecord("expenses", req.body || {}, req, { permission: "expenses.create", defaults: { status: "PENDING" }, auditAction: "MANAGER_EXPENSE_CREATED", notification: { type: "manager_expense_created", title: "Expense request created", body: "An expense request was created for your team." } }), meta: {} })));
+managerRouter.post("/expenses", handle((req, res) => {
+  const result = managerService.createExpenseClaim(req.body || {}, req);
+  return res.status(201).json({ success: true, message: "Expense claim submitted.", data: result.record, meta: {} });
+}));
+managerRouter.post("/expense-claims", handle((req, res) => {
+  const result = managerService.createExpenseClaim(req.body || {}, req);
+  return res.status(201).json({ success: true, message: "Expense claim submitted.", data: result.record, meta: {} });
+}));
+managerRouter.post("/claims", handle((req, res) => {
+  const result = managerService.createExpenseClaim(req.body || {}, req);
+  return res.status(201).json({ success: true, message: "Expense claim submitted.", data: result.record, meta: {} });
+}));
+managerRouter.use("/vendors", vendorsRouter);
+managerRouter.post("/vendor", handle((req, res) => res.status(201).json({ success: true, message: "Vendor created.", data: managerService.createVendor(req.body || {}, req), meta: {} })));
 managerRouter.get("/expenses/:id", handle((req, res) => {
   const record = managerService.getScopedRecord("expenses", req.params.id, req.user, { permission: "expenses.view", allowCreatedBy: true });
   return record ? send(res, "Manager expense loaded.", record) : notFound(res, "EXPENSE_NOT_FOUND");
@@ -290,5 +326,116 @@ managerRouter.patch("/notifications/:id/read", handle((req, res) => {
   return notification ? send(res, "Manager notification marked as read.", notification) : notFound(res, "NOTIFICATION_NOT_FOUND");
 }));
 managerRouter.get("/audit-logs", handle((req, res) => paged(res, "Manager audit logs loaded.", managerService.listAuditLogs(req.user, req.query))));
+
+managerRouter.get("/lookups", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager lookups loaded.", getLookups());
+}));
+
+managerRouter.get("/nysc-interns/dashboard", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager NYSC and interns dashboard loaded.", nyscInternService.getDashboard(req.user));
+}));
+managerRouter.get("/nysc-interns/export", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const csv = nyscInternService.exportProfiles(req.user, req.query);
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", "attachment; filename=\"nysc-interns.csv\"");
+  return res.status(200).send(csv);
+}));
+managerRouter.get("/nysc-interns", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.listProfiles(req.user, req.query);
+  return paged(res, "Manager NYSC and intern members loaded.", result);
+}));
+managerRouter.post("/nysc-interns", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+}));
+managerRouter.get("/nysc-interns/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager NYSC/intern profile loaded.", nyscInternService.getDetails(req.params.id, req.user));
+}));
+managerRouter.patch("/nysc-interns/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.updateProfile(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "Manager NYSC/intern profile updated.", result.record) : notFound(res, "NYSC_INTERN_PROFILE_NOT_FOUND");
+}));
+managerRouter.post("/nysc-interns/:id/supervisor", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.assignSupervisor(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "Placement supervisor assigned.", result.record) : notFound(res, "NYSC_INTERN_PROFILE_NOT_FOUND");
+}));
+
+managerRouter.get("/announcements", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.listAdminAnnouncements(req.user, req.query);
+  return paged(res, "Manager announcements loaded.", result);
+}));
+managerRouter.post("/announcements", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
+  return res.status(201).json({ success: true, message: "Announcement published.", data: result.record, meta: result.meta || {} });
+}));
+managerRouter.post("/announcement", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
+  return res.status(201).json({ success: true, message: "Announcement published.", data: result.record, meta: result.meta || {} });
+}));
+managerRouter.post("/nysc", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+}));
+managerRouter.post("/nysc-interns/members", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+}));
+managerRouter.get("/announcements/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const announcement = announcementService.getAdminDetails(req.params.id, req.user);
+  return announcement ? send(res, "Manager announcement loaded.", announcement) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+managerRouter.post("/announcements/:id/publish", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.publishAnnouncement(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "Announcement published.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+
+managerRouter.get("/payroll/dashboard", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager payroll dashboard loaded.", payrollService.getDashboard());
+}));
+managerRouter.get("/payroll/periods", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = payrollService.listPayrollPeriods(req.query);
+  return paged(res, "Manager payroll periods loaded.", result);
+}));
+managerRouter.post("/payroll/periods", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const period = payrollService.createPayrollPeriod(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "Payroll period created.", data: period, meta: {} });
+}));
+managerRouter.get("/payroll/runs", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = payrollService.listRuns(req.query);
+  return paged(res, "Manager payroll runs loaded.", result);
+}));
+managerRouter.post("/payroll/runs", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = payrollService.createPayrollRun(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "Payroll run calculated.", data: result.record, meta: { readiness: result.readiness } });
+}));
+managerRouter.get("/payroll", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = payrollService.listRuns(req.query);
+  return paged(res, "Manager payroll loaded.", result);
+}));
+managerRouter.get("/payroll/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager payroll run loaded.", payrollService.getRunDetails(req.params.id, req.user));
+}));
 
 module.exports = { managerRouter };

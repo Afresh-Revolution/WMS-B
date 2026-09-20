@@ -128,10 +128,11 @@ function notify({ profile, placement, type, title, body }) {
   });
 }
 
-function validateDepartment(id) {
-  const department = repository.findDepartment(id);
+function validateDepartment(idOrName) {
+  const { resolveDepartment } = require("../lookups/catalog");
+  const department = resolveDepartment(idOrName) || repository.findDepartment(idOrName);
   if (!department || !["active", "ACTIVE"].includes(String(department.status || "active"))) {
-    throw createHttpError(404, "Department was not found or is inactive.", "DEPARTMENT_NOT_FOUND");
+    throw createHttpError(404, "Department was not found or is inactive. Choose a department from the list.", "DEPARTMENT_NOT_FOUND");
   }
   return department;
 }
@@ -232,27 +233,69 @@ function createLegacyMirror(profile, placement) {
 
 function createProfile(payload, user) {
   assertPermission(user, NYSC_INTERN_PERMISSIONS.CREATE);
-  const fullName = payload.fullName || payload.full_name;
-  const type = normalizeEnum(payload.type, Object.values(PROFILE_TYPE), null);
+  const fullName = payload.fullName || payload.full_name || payload.name;
+  const type = normalizeEnum(payload.type || payload.staffType || payload.staff_type, Object.values(PROFILE_TYPE), PROFILE_TYPE.NYSC);
   if (!fullName) {
     throw createHttpError(400, "Full name is required.", "FULL_NAME_REQUIRED");
   }
   if (!type) {
     throw createHttpError(400, "Type must be NYSC or INTERN.", "INVALID_PROFILE_TYPE");
   }
-  if (!payload.institution) {
-    throw createHttpError(400, "Institution is required.", "INSTITUTION_REQUIRED");
-  }
-  const courseOfStudy = payload.courseOfStudy || payload.course_of_study || payload.course;
-  if (!courseOfStudy) {
-    throw createHttpError(400, "Course of study is required.", "COURSE_REQUIRED");
-  }
+  const institution = payload.institution || (type === PROFILE_TYPE.NYSC ? "NYSC" : "Internship");
+  const courseOfStudy = payload.courseOfStudy || payload.course_of_study || payload.course || "Not specified";
   const startDate = assertDate(payload.startDate || payload.start_date, "START_DATE_REQUIRED", "Start date is required.");
   const endDate = assertDate(payload.endDate || payload.end_date, "END_DATE_REQUIRED", "End date is required.");
   if (endDate <= startDate) {
     throw createHttpError(400, "End date must be after start date.", "INVALID_PLACEMENT_DATES");
   }
-  const department = validateDepartment(payload.departmentId || payload.department_id);
+  const actorEmployee = repository.findEmployeeByUserId(user?.id);
+  const departmentCandidates = [
+    payload.departmentId,
+    payload.department_id,
+    payload.department,
+    actorEmployee?.departmentId,
+    actorEmployee?.department_id,
+    actorEmployee?.department,
+    user?.departmentId,
+    user?.department_id,
+    user?.department,
+    "Administration",
+  ].filter(Boolean);
+  let department = null;
+  for (const candidate of departmentCandidates) {
+    try {
+      department = validateDepartment(candidate);
+      break;
+    } catch (error) {
+      if (error.code !== "DEPARTMENT_NOT_FOUND") {
+        throw error;
+      }
+    }
+  }
+  if (!department) {
+    const { listDepartmentOptions } = require("../lookups/catalog");
+    const firstDepartment = listDepartmentOptions()[0];
+    department = firstDepartment ? validateDepartment(firstDepartment.id) : null;
+  }
+  if (!department) {
+    throw createHttpError(404, "Department was not found or is inactive. Choose a department from the list.", "DEPARTMENT_NOT_FOUND");
+  }
+  const supervisorValue =
+    payload.supervisorEmployeeId ||
+    payload.supervisor_employee_id ||
+    payload.supervisorId ||
+    payload.supervisor_id ||
+    payload.supervisor;
+  const supervisor =
+    supervisorValue && typeof supervisorValue === "object"
+      ? repository.findEmployee(supervisorValue.id || supervisorValue.employeeId || supervisorValue.employee_id || supervisorValue.name || supervisorValue.fullName)
+      : supervisorValue
+        ? repository.findEmployee(supervisorValue)
+        : null;
+  if (supervisorValue && (!supervisor || !["active", "ACTIVE"].includes(String(supervisor.status || "active")))) {
+    throw createHttpError(404, "Supervisor employee was not found or is inactive. Use a real employee ID from the directory.", "SUPERVISOR_NOT_FOUND");
+  }
+  const supervisorId = supervisor?.id || null;
   ensureNoActiveDuplicate({ fullName, email: payload.email, type });
   const profile = repository.createProfile({
     profileNumber: buildProfileNumber(type),
@@ -265,7 +308,7 @@ function createProfile(payload, user) {
     phone: payload.phone || null,
     gender: payload.gender || null,
     dateOfBirth: payload.dateOfBirth || payload.date_of_birth || null,
-    institution: payload.institution,
+    institution,
     courseOfStudy,
     course_of_study: courseOfStudy,
     matricNumber: payload.matricNumber || payload.matric_number || null,
@@ -290,12 +333,15 @@ function createProfile(payload, user) {
     placementProgress: 0,
     role: payload.role || (type === PROFILE_TYPE.NYSC ? "NYSC Member" : "Intern"),
     description: payload.description || null,
-    workLocation: payload.workLocation || payload.work_location || null,
+    workLocation: payload.workLocation || payload.work_location || payload.location || null,
     createdBy: user.id,
   });
   createLegacyMirror(profile, placement);
   recordHistory({ placementId: placement.id, actor: user, eventType: "PLACEMENT_CREATED", oldStatus: null, newStatus: placement.placementStatus });
   notify({ profile, placement, type: "PLACEMENT_CREATED", title: "Placement created", body: `${profile.fullName}'s placement has been created.` });
+  if (supervisorId) {
+    assignSupervisor(profile.id, { employeeId: supervisorId }, user);
+  }
   return { record: decorateProfile(profile, user, true) };
 }
 
@@ -304,13 +350,17 @@ function listProfiles(user, query = {}) {
   let profiles = repository.listAllProfiles(query);
   if (!can(user, NYSC_INTERN_PERMISSIONS.VIEW_ALL)) {
     const actorEmployee = repository.findEmployeeByUserId(user.id);
+    const departmentId = actorEmployee?.departmentId || actorEmployee?.department_id || user.departmentId || user.department_id;
     profiles = profiles.filter((profile) => {
-      if (profile.userId === user.id) {
+      if (profile.userId === user.id || profile.createdBy === user.id) {
         return true;
       }
       const placement = repository.findPlacementByProfile(profile.id);
       const supervisor = placement ? repository.currentSupervisor(placement.id) : null;
-      return actorEmployee && supervisor?.employeeId === actorEmployee.id;
+      if (actorEmployee && supervisor?.employeeId === actorEmployee.id) {
+        return true;
+      }
+      return Boolean(departmentId && placement && String(placement.departmentId) === String(departmentId));
     });
   }
   return paginate(profiles.map((profile) => decorateProfile(profile, user)), query);

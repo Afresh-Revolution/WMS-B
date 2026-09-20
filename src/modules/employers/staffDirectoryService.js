@@ -5,7 +5,7 @@ const accountStore = require("../../auth/accountStore");
 const { getUserById, listUsers } = require("../../auth/userStore");
 const { readCollection, writeCollection } = require("../../database/jsonStore");
 const { getRolePermissions, ROLE_DEFINITIONS } = require("../../constants/rbac");
-const { resolveDepartment, resolveEmploymentType } = require("../lookups/catalog");
+const { displayLocation, normalizeWorkLocation, resolveDepartment, resolveEmploymentType } = require("../lookups/catalog");
 const { applyBasicFilters, paginate, sortRecords } = require("../../utils/query");
 
 const ROLE_ALIASES = Object.freeze({
@@ -178,7 +178,8 @@ function normalizeStaffRecord(record, staffType) {
     departmentId: departmentId || null,
     manager: record.manager || record.supervisor || getLookup("employees", managerId),
     managerId: managerId || null,
-    location: record.location || record.workLocation || record.ppa || null,
+      location: displayLocation(record),
+      locationType: record.locationType || record.location_type || (displayLocation(record) === "Remote" ? "remote" : displayLocation(record) ? "onsite" : null),
     branch: record.branch || getLookup("branches", branchId),
     branchId: branchId || null,
     employmentType: record.employmentType || record.employment_type || humanize(staffType),
@@ -452,6 +453,13 @@ function normalizeCreatePayload(body = {}) {
   const department = resolveDepartment(
     body.departmentId || body.department_id || employment.departmentId || body.department || employment.department
   );
+  const workLocation = normalizeWorkLocation({
+    ...body,
+    ...employment,
+    location: employment.location || body.location,
+    workLocation: employment.workLocation || body.workLocation,
+    locationType: body.locationType || employment.locationType,
+  });
 
   const fullName =
     body.fullName ||
@@ -505,8 +513,11 @@ function normalizeCreatePayload(body = {}) {
       endDate: employment.endDate || body.endDate,
       expectedEndDate: employment.expectedEndDate || body.expectedEndDate,
       duration: employment.duration || body.duration,
-      location: employment.location || body.location,
-      workLocation: employment.workLocation || body.workLocation,
+      location: workLocation.location,
+      locationType: workLocation.locationType,
+      location_type: workLocation.locationType,
+      workLocation: workLocation.location,
+      work_location: workLocation.location,
       branch: employment.branch || body.branch,
       branchId: employment.branchId || body.branchId,
       ppa: employment.ppa || body.ppa,
@@ -769,6 +780,7 @@ function employmentUpdatesFromPayload(payload = {}) {
       : null;
   const jobTitle = payload.jobTitle || payload.job_title || payload.position || payload.roleTitle || employment.jobTitle || maybeJobTitle;
   const reportsTo = payload.reportsTo || payload.reports_to || payload.manager || employment.manager || employment.reportsTo;
+  const workLocation = normalizeWorkLocation({ ...payload, ...employment });
 
   return compactObject({
     jobTitle,
@@ -785,6 +797,11 @@ function employmentUpdatesFromPayload(payload = {}) {
     phone: payload.phone,
     fullName: payload.fullName || payload.name || payload.displayName,
     name: payload.fullName || payload.name || payload.displayName,
+    location: workLocation.location,
+    locationType: workLocation.locationType,
+    location_type: workLocation.locationType,
+    workLocation: workLocation.location,
+    work_location: workLocation.location,
   });
 }
 

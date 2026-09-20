@@ -1,5 +1,5 @@
 const express = require("express");
-const { authenticate, requireRole } = require("../../auth/middleware");
+const { authenticate } = require("../../auth/middleware");
 const { RESOURCE_MODULES, SUPER_ADMIN_NAVIGATION } = require("../_shared/moduleCatalog");
 const { createResourceRouter } = require("../_shared/resourceRouter");
 const { announcementsRouter } = require("../announcements/routes");
@@ -34,6 +34,7 @@ const { systemHealthRouter } = require("../systemHealth/routes");
 const { targetsRouter } = require("../targets/routes");
 const { technicalAuditRouter } = require("../technicalAudit/routes");
 const { usersRouter } = require("../users/routes");
+const { vendorsRouter } = require("../vendors/routes");
 
 const superAdminRouter = express.Router();
 
@@ -67,7 +68,22 @@ function buildModuleDirectory(req) {
   return [...directRoutes.map((route) => ({ ...route, url: `${base}${route.route}` })), ...catalogRoutes];
 }
 
-superAdminRouter.use(authenticate, requireRole("superadmin"));
+const MANAGER_SUPER_ADMIN_PREFIXES = ["/nysc-interns", "/announcements", "/expenses", "/vendors"];
+
+function allowManagerFinanceAndComms(req, res, next) {
+  if (req.user?.role === "superadmin") {
+    return next();
+  }
+  if (
+    req.user?.role === "manager" &&
+    MANAGER_SUPER_ADMIN_PREFIXES.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))
+  ) {
+    return next();
+  }
+  return res.status(403).json({ error: "Forbidden." });
+}
+
+superAdminRouter.use(authenticate, allowManagerFinanceAndComms);
 
 superAdminRouter.get("/dashboard", handle((req, res) => send(res, "Super Admin dashboard loaded.", buildDashboardOverview(req.query))));
 superAdminRouter.get("/dashboard/stats", handle((req, res) => {
@@ -130,7 +146,7 @@ superAdminRouter.use("/purchases", purchaseRequestsRouter);
 superAdminRouter.use("/bills", billsRouter);
 superAdminRouter.use("/expenses", expensesRouter);
 superAdminRouter.use("/expense-policies", expensePoliciesRouter);
-superAdminRouter.use("/vendors", createResourceRouter(RESOURCE_MODULES.find((item) => item.key === "vendors")));
+superAdminRouter.use("/vendors", vendorsRouter);
 superAdminRouter.use("/events", eventsRouter);
 superAdminRouter.use("/discipline", disciplineRouter);
 superAdminRouter.use("/nysc-interns", nyscInternRouter);

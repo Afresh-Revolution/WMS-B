@@ -190,6 +190,42 @@ leaveRouter.get(
 );
 
 leaveRouter.post(
+  "/requests/:id/extend",
+  requireLeavePermission(LEAVE_PERMISSIONS.CREATE),
+  handle((req, res) => {
+    const result = leaveService.requestLeaveExtension(req.params.id, req.body || {}, req.user);
+    auditLeave(req, "LEAVE_EXTENSION_REQUESTED", result);
+    return res.status(201).json({ success: true, message: "Leave extension requested.", data: result.request, meta: { extension: result.extension } });
+  })
+);
+
+leaveRouter.post(
+  "/requests/:id/extend/approve",
+  requireLeavePermission(LEAVE_PERMISSIONS.APPROVE),
+  handle((req, res) => {
+    const result = leaveService.approveLeaveExtension(req.params.id, req.body || {}, req.user);
+    if (!result) {
+      return sendNotFound(res, "LEAVE_REQUEST_NOT_FOUND");
+    }
+    auditLeave(req, "LEAVE_EXTENSION_APPROVED", result);
+    return res.json({ success: true, message: "Leave extension approved.", data: result.record, meta: { extension: result.extension, balance: result.balance } });
+  })
+);
+
+leaveRouter.post(
+  "/requests/:id/extend/reject",
+  requireLeavePermission(LEAVE_PERMISSIONS.REJECT),
+  handle((req, res) => {
+    const result = leaveService.rejectLeaveExtension(req.params.id, req.body || {}, req.user);
+    if (!result) {
+      return sendNotFound(res, "LEAVE_REQUEST_NOT_FOUND");
+    }
+    auditLeave(req, "LEAVE_EXTENSION_REJECTED", result);
+    return res.json({ success: true, message: "Leave extension rejected.", data: result.record, meta: { extension: result.extension } });
+  })
+);
+
+leaveRouter.post(
   "/requests/:id/approve",
   requireLeavePermission(LEAVE_PERMISSIONS.APPROVE),
   handle((req, res) => {

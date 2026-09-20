@@ -210,8 +210,18 @@ function updateLegacyMember(collection, id, payload) {
   return updateRecord(collection, id, payload);
 }
 
-function findEmployee(id) {
-  return activeRecords("employees").find((employee) => employee.id === id) || null;
+function findEmployee(idOrName) {
+  const requested = String(idOrName || "").trim().toLowerCase();
+  if (!requested) {
+    return null;
+  }
+  return (
+    activeRecords("employees").find((employee) => {
+      const name = String(employee.fullName || employee.name || "").trim().toLowerCase();
+      const email = String(employee.email || "").trim().toLowerCase();
+      return employee.id === idOrName || name === requested || email === requested || (requested.length > 2 && name.includes(requested));
+    }) || null
+  );
 }
 
 function findEmployeeByUserId(userId) {

@@ -42,18 +42,69 @@ function isActiveEmployee(employee) {
   return employee && !["inactive", "suspended", "terminated", "deleted"].includes(status);
 }
 
+function resolveAudienceType(payload = {}) {
+  const raw = String(
+    payload.audienceType || payload.audience_type || payload.audience || payload.targetAudience || payload.target_audience || ""
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const aliases = {
+    all_staff: AUDIENCE_TYPE.ALL_STAFF,
+    allstaff: AUDIENCE_TYPE.ALL_STAFF,
+    everyone: AUDIENCE_TYPE.ALL_STAFF,
+    general: AUDIENCE_TYPE.ALL_STAFF,
+    staff: AUDIENCE_TYPE.ALL_STAFF,
+    department: AUDIENCE_TYPE.DEPARTMENT,
+    single_department: AUDIENCE_TYPE.DEPARTMENT,
+    employee: AUDIENCE_TYPE.EMPLOYEE,
+    employees: AUDIENCE_TYPE.EMPLOYEE,
+    multiple_departments: AUDIENCE_TYPE.MULTIPLE_DEPARTMENTS,
+  };
+  return aliases[raw] || normalizeEnum(raw, Object.values(AUDIENCE_TYPE), AUDIENCE_TYPE.ALL_STAFF);
+}
+
+function resolveAudienceDepartmentId(payload = {}) {
+  const raw = payload.departmentId || payload.department_id || payload.department;
+  if (!raw) {
+    return null;
+  }
+  if (typeof raw === "object") {
+    return raw.id || raw.departmentId || raw.department_id || null;
+  }
+  const { resolveDepartment } = require("../lookups/catalog");
+  const department = resolveDepartment(raw) || repository.findDepartment?.(raw);
+  return department?.id || raw;
+}
+
+function normalizeCreatePayload(payload = {}) {
+  const message = payload.message || payload.body || payload.content || payload.text || payload.description || "";
+  const title = String(payload.title || payload.subject || String(message).trim().split("\n")[0] || "Announcement").trim().slice(0, 120);
+  const publishHint = String(payload.whenToSend || payload.when_to_send || payload.status || "").trim().toLowerCase();
+  const pinValue = payload.isPinned ?? payload.pinToTop ?? payload.pin_to_top ?? payload.pinned;
+  return {
+    ...payload,
+    title,
+    message: String(message).trim(),
+    audienceType: resolveAudienceType(payload),
+    departmentId: resolveAudienceDepartmentId(payload),
+    isPinned: pinValue === true || pinValue === "yes" || pinValue === "true" || pinValue === "1",
+    status:
+      ["publish now", "published", "publish"].includes(publishHint) || payload.status === ANNOUNCEMENT_STATUS.PUBLISHED
+        ? ANNOUNCEMENT_STATUS.PUBLISHED
+        : payload.status,
+    expiresAt: payload.expiresAt || payload.expires_at || payload.expires || payload.expiry || null,
+  };
+}
+
 function normalizeAudiencePayload(payload = {}) {
-  const audienceType = normalizeEnum(
-    payload.audienceType || payload.audience_type || payload.targetAudienceType || payload.target_audience_type,
-    Object.values(AUDIENCE_TYPE),
-    AUDIENCE_TYPE.ALL_STAFF
-  );
+  const audienceType = resolveAudienceType(payload);
   if (audienceType === AUDIENCE_TYPE.MULTIPLE_DEPARTMENTS) {
     const ids = payload.departmentIds || payload.department_ids || [];
     return ids.map((departmentId) => ({ audienceType, departmentId, employeeId: null }));
   }
   if (audienceType === AUDIENCE_TYPE.DEPARTMENT) {
-    return [{ audienceType, departmentId: payload.departmentId || payload.department_id || null, employeeId: null }];
+    return [{ audienceType, departmentId: resolveAudienceDepartmentId(payload), employeeId: null }];
   }
   if (audienceType === AUDIENCE_TYPE.EMPLOYEE) {
     const employeeIds = payload.employeeIds || payload.employee_ids || (payload.employeeId ? [payload.employeeId] : []);
@@ -223,8 +274,9 @@ function publishAnnouncementRecord(announcement, user, payload = {}) {
   return { oldValues: announcement, record: decorateAnnouncement(updated), meta: { recipients: recipients.length, notifications: notifications.length } };
 }
 
-function createAnnouncement(payload, user, options = {}) {
+function createAnnouncement(rawPayload, user, options = {}) {
   assertPermission(user, ANNOUNCEMENT_PERMISSIONS.CREATE);
+  const payload = normalizeCreatePayload(rawPayload || {});
   if (!payload.title || !payload.message) {
     throw createHttpError(400, "Announcement title and message are required.", "ANNOUNCEMENT_REQUIRED_FIELDS");
   }

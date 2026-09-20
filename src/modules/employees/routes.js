@@ -77,6 +77,7 @@ function normalizeEmployeeCreateBody(body = {}) {
       department: valueOf(body, ["department", "departmentName", "department_name"]),
       departmentId: valueOf(body, ["departmentId", "department_id"]),
       location: valueOf(body, ["location", "workLocation", "work_location"]),
+      locationType: valueOf(body, ["locationType", "location_type", "workMode", "work_mode"]),
       startDate: valueOf(body, ["startDate", "start_date", "employmentStartDate", "hireDate"]),
       reportsTo: valueOf(body, ["reportsTo", "reports_to", "manager"]),
       role: valueOf(body, ["role", "roleKey", "role_key"]) || "employee",
@@ -111,7 +112,7 @@ employeesRouter.get("/options", authenticate, requireRole("superadmin"), async (
   });
 });
 
-employeesRouter.post("/", authenticate, requireRole("superadmin"), async (req, res) => {
+employeesRouter.post("/", authenticate, requireRole(["superadmin", "manager", "hr"]), async (req, res) => {
   const { body, generatedPassword, generatedEmail } = normalizeEmployeeCreateBody(req.body || {});
   if (!body.fullName) {
     return fail(res, 400, "EMPLOYEE_NAME_REQUIRED", "A name is required to add a person.");

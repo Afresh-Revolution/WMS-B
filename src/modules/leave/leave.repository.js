@@ -329,9 +329,26 @@ function listHistory(query = {}) {
   return paginate(applyBasicFilters(getCollection("leave_history"), query, ["action", "comment", "status"]), query);
 }
 
+function listExtensions(leaveRequestId) {
+  return getCollection("leave_extensions").filter((record) => !leaveRequestId || record.leaveRequestId === leaveRequestId);
+}
+
+function findExtension(id) {
+  return getCollection("leave_extensions").find((record) => record.id === id) || null;
+}
+
+function createExtension(payload) {
+  return createRecord("leave_extensions", payload);
+}
+
+function updateExtension(id, payload) {
+  return updateRecord("leave_extensions", id, payload);
+}
+
 module.exports = {
   createApproval,
   createAttachment,
+  createExtension,
   createHistory,
   createLeaveRequest,
   createLeaveType,
@@ -341,18 +358,22 @@ module.exports = {
   findBalance,
   findEmployeeById,
   findEmployeeByUserId,
+  findExtension,
   findLeaveType,
+  findLeaveTypeByCode,
   findPolicyForLeaveType,
   findRequest,
   getHolidaysBetween,
   listAllRequests,
   listBalances,
   listEmployees,
+  listExtensions,
   listHistory,
   listLeaveTypes,
   listPolicies,
   listRequests,
   saveBalance,
+  updateExtension,
   updateLeaveRequest,
   updateLeaveType,
   updatePolicy,

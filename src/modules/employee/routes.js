@@ -2,6 +2,7 @@ const express = require("express");
 const { authenticate } = require("../../auth/middleware");
 const attendanceService = require("../attendance/service");
 const employeeService = require("./service");
+const leaveService = require("../leave/leave.service");
 
 const employeeRouter = express.Router();
 
@@ -47,6 +48,10 @@ employeeRouter.post("/leave", handle((req, res) => {
 employeeRouter.post("/leave/requests", handle((req, res) => {
   const result = employeeService.createLeaveRequest(req.body || {}, req.user, req);
   return res.status(201).json({ success: true, message: "Employee leave request submitted.", data: result.request, meta: { balance: result.balance } });
+}));
+employeeRouter.post("/leave/:id/extend", handle((req, res) => {
+  const result = leaveService.requestLeaveExtension(req.params.id, req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "Leave extension requested.", data: result.request, meta: { extension: result.extension } });
 }));
 employeeRouter.get("/leave/:id", handle((req, res) => {
   const request = employeeService.getLeaveRequest(req.params.id, req.user);

@@ -45,6 +45,7 @@ const { technicalAuditRouter } = require("./technicalAudit/routes");
 const { systemRouter } = require("./system/routes");
 const { targetsRouter } = require("./targets/routes");
 const { usersRouter } = require("./users/routes");
+const { vendorsRouter } = require("./vendors/routes");
 
 function createApiV1Router() {
   const router = express.Router();
@@ -111,7 +112,7 @@ function createApiV1Router() {
   router.use("/search", searchRouter);
   router.use("/global-search", searchRouter);
   router.use("/purchases", purchaseRequestsRouter);
-  router.use("/vendors", createResourceRouter(RESOURCE_MODULES.find((item) => item.key === "vendors")));
+  router.use("/vendors", vendorsRouter);
   router.get("/health", authenticate, requireRole("superadmin"), (req, res) => {
     const systemService = require("./system/service");
     return res.json({ success: true, message: "System health loaded.", data: systemService.getHealth(), meta: {} });

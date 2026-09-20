@@ -266,6 +266,16 @@ announcementsRouter.get(
   })
 );
 
+announcementsRouter.post(
+  "/",
+  requireAnnouncementPermission(ANNOUNCEMENT_PERMISSIONS.CREATE),
+  handle((req, res) => {
+    const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
+    auditAnnouncement(req, result.record.status === "published" ? "ANNOUNCEMENT_PUBLISHED" : "ANNOUNCEMENT_CREATED", result);
+    return res.status(201).json({ success: true, message: "Announcement created.", data: result.record, meta: result.meta || {} });
+  })
+);
+
 announcementsRouter.get(
   "/:id",
   requireAnnouncementPermission(ANNOUNCEMENT_PERMISSIONS.VIEW),

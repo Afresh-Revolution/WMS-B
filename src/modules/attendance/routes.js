@@ -48,6 +48,20 @@ attendanceRouter.get("/me/locations", handle((req, res) => paged(res, "Assigned 
 attendanceRouter.get("/me/status", handle((req, res) => send(res, "Check-in status loaded.", attendanceService.getCheckInStatus(req.user, req.query))));
 attendanceRouter.get("/me/history", handle((req, res) => paged(res, "My attendance history loaded.", attendanceService.listMyHistory(req.user, req.query))));
 attendanceRouter.post("/check-in", handle(submitCheckIn));
+attendanceRouter.post("/clock-in", handle((req, res) => {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (["manager", "hod", "hr", "department_manager"].includes(role)) {
+    const managerService = require("../manager/service");
+    const result = managerService.clockInSelf(req.body || {}, req);
+    return res.status(result.created ? 201 : 200).json({
+      success: true,
+      message: result.created ? "Clock-in recorded." : "Clock-in already recorded.",
+      data: result.record,
+      meta: { idempotent: !result.created },
+    });
+  }
+  return submitCheckIn(req, res);
+}));
 
 attendanceRouter.get("/locations", handle((req, res) => paged(res, "Attendance locations loaded.", attendanceService.listLocations(req.user, req.query))));
 attendanceRouter.post("/locations", handle((req, res) => res.status(201).json({ success: true, message: "Attendance location created.", data: attendanceService.createLocation(req.body || {}, req), meta: {} })));

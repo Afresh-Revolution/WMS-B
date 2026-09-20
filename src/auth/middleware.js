@@ -95,8 +95,9 @@ async function authenticate(req, res, next) {
 }
 
 function requireRole(role) {
+  const allowed = Array.isArray(role) ? role : [role];
   return (req, res, next) => {
-    if (!req.user || req.user.role !== role) {
+    if (!req.user || (req.user.role !== "superadmin" && !allowed.includes(req.user.role))) {
       return res.status(403).json({ error: "Forbidden." });
     }
 

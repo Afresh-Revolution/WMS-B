@@ -197,3 +197,87 @@ test("a user created through POST /api/v1/users can apply leave on employee rout
   assert.equal(listed.data.length, 1);
   assert.equal(listed.data[0].id, applied.data.id);
 });
+
+test("superadmin applies leave by name, blocks a second request, and approves an extension", async (t) => {
+  const app = createTestApp(t);
+  const server = app.listen(0);
+  t.after(() => server.close());
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const auth = await bootstrapSuperadmin(baseUrl);
+  const adminHeaders = {
+    "content-type": "application/json",
+    authorization: `Bearer ${auth.token}`,
+  };
+
+  const deptResponse = await fetch(`${baseUrl}/api/v1/departments`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({ name: "Operations", code: "OPS-LEAVE", status: "active" }),
+  });
+  assert.equal(deptResponse.status, 201);
+  const department = await deptResponse.json();
+
+  const staffResponse = await fetch(`${baseUrl}/api/v1/employees`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      fullName: "Ada Okeke",
+      email: "ada.okeke@example.com",
+      role: "employee",
+      departmentId: department.data.id,
+      department: "Operations",
+    }),
+  });
+  assert.equal(staffResponse.status, 201);
+  const staff = await staffResponse.json();
+
+  const leaveTypesResponse = await fetch(`${baseUrl}/api/v1/leave/types`, { headers: adminHeaders });
+  const leaveTypes = await leaveTypesResponse.json();
+  const annualLeave = leaveTypes.data.find((leaveType) => leaveType.code === "ANNUAL");
+
+  const applyResponse = await fetch(`${baseUrl}/api/v1/leave/requests`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      fullName: "Ada Okeke",
+      department: "Operations",
+      leaveTypeId: annualLeave.id,
+      startDate: "2026-10-05",
+      endDate: "2026-10-09",
+    }),
+  });
+  assert.equal(applyResponse.status, 201);
+  const applied = await applyResponse.json();
+  assert.equal(applied.data.employeeId, staff.data.id);
+  assert.equal(applied.data.status, "PENDING");
+
+  const secondResponse = await fetch(`${baseUrl}/api/v1/leave/requests`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      fullName: "Ada Okeke",
+      department: "Operations",
+      leaveTypeId: annualLeave.id,
+      startDate: "2026-11-02",
+      endDate: "2026-11-06",
+    }),
+  });
+  assert.equal(secondResponse.status, 409);
+
+  const extendResponse = await fetch(`${baseUrl}/api/v1/leave/requests/${applied.data.id}/extend`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({ endDate: "2026-10-16", note: "Need more days" }),
+  });
+  assert.equal(extendResponse.status, 201);
+
+  const approveExtension = await fetch(`${baseUrl}/api/v1/leave/requests/${applied.data.id}/extend/approve`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({ comment: "Approved extra days" }),
+  });
+  assert.equal(approveExtension.status, 200);
+  const approved = await approveExtension.json();
+  assert.equal(approved.data.endDate, "2026-10-16");
+});

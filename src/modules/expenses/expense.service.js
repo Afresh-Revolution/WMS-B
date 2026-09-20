@@ -260,7 +260,10 @@ function createExpense(payload, user) {
     receipts: receiptPayloads,
   });
   if (!draft && policyPreview.violations.length) {
-    throw createHttpError(409, policyPreview.violations[0].message, policyPreview.violations[0].code);
+    const blocking = policyPreview.violations.filter((violation) => violation.code !== "RECEIPT_REQUIRED");
+    if (blocking.length) {
+      throw createHttpError(409, blocking[0].message, blocking[0].code);
+    }
   }
 
   const status = draft ? EXPENSE_STATUS.DRAFT : EXPENSE_STATUS.SUBMITTED;

@@ -93,6 +93,10 @@ const FORBIDDEN_MANAGER_PROFILE_FIELDS = Object.freeze([
   "system_settings",
 ]);
 
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -807,6 +811,93 @@ function listAttendance(user, query = {}) {
   return listScoped("attendance", query, scope, { searchFields: SEARCH_FIELDS.attendance });
 }
 
+function findSelfAttendance(employee, user, workDate) {
+  return activeRecords("attendance").find((record) => {
+    const samePerson =
+      [record.employeeId, record.employee_id, record.userId, record.user_id].filter(Boolean).includes(employee.id) ||
+      [record.userId, record.user_id].filter(Boolean).includes(user.id);
+    const sameDate = String(record.workDate || record.work_date || record.date || "") === workDate;
+    return samePerson && sameDate && !record.deletedAt && !record.deleted_at;
+  }) || null;
+}
+
+function clockInSelf(payload = {}, req) {
+  const scope = buildScope(req.user);
+  const employee = getActorEmployee(req.user);
+  if (!employee) {
+    throw createHttpError(403, "Authenticated user is not linked to an employee record.", "EMPLOYEE_PROFILE_REQUIRED");
+  }
+  const workDate = String(payload.date || payload.workDate || payload.work_date || today());
+  const existing = findSelfAttendance(employee, req.user, workDate);
+  const checkIn = payload.checkIn || payload.check_in || now();
+  if (existing && (existing.checkIn || existing.check_in)) {
+    return { record: existing, created: false };
+  }
+  if (existing) {
+    const result = writeScopedRecord("attendance", existing.id, compactObject({
+      checkIn,
+      check_in: checkIn,
+      status: existing.status || "PRESENT",
+      source: existing.source || "manager_self_service",
+    }), req, { permission: "attendance.check_in", auditAction: "MANAGER_CLOCK_IN" });
+    return { record: result.record, created: false };
+  }
+  const record = createScopedRecord("attendance", {
+    employeeId: employee.id,
+    employee_id: employee.id,
+    employeeName: getEmployeeName(employee),
+    employee_name: getEmployeeName(employee),
+    userId: req.user.id,
+    user_id: req.user.id,
+    departmentId: employee.departmentId || employee.department_id || req.user.departmentId || null,
+    department_id: employee.department_id || employee.departmentId || req.user.departmentId || null,
+    organizationId: scope.organizationId,
+    organization_id: scope.organizationId,
+    workDate,
+    work_date: workDate,
+    date: workDate,
+    checkIn,
+    check_in: checkIn,
+    status: "PRESENT",
+    source: "manager_self_service",
+  }, req, { permission: "attendance.check_in", auditAction: "MANAGER_CLOCK_IN" });
+  return { record, created: true };
+}
+
+function clockOutSelf(payload = {}, req) {
+  const employee = getActorEmployee(req.user);
+  if (!employee) {
+    throw createHttpError(403, "Authenticated user is not linked to an employee record.", "EMPLOYEE_PROFILE_REQUIRED");
+  }
+  const workDate = String(payload.date || payload.workDate || payload.work_date || today());
+  const existing = findSelfAttendance(employee, req.user, workDate);
+  const checkOut = payload.checkOut || payload.check_out || now();
+  if (!existing) {
+    clockInSelf({ ...payload, date: workDate }, req);
+    return clockOutSelf({ ...payload, date: workDate, checkOut }, req);
+  }
+  const result = writeScopedRecord("attendance", existing.id, compactObject({
+    checkOut,
+    check_out: checkOut,
+    status: existing.status || "PRESENT",
+  }), req, { permission: "attendance.check_in", auditAction: "MANAGER_CLOCK_OUT" });
+  return { record: result.record, created: false };
+}
+
+function createVendor(payload = {}, req) {
+  const { normalizeVendorPayload } = require("../vendors/routes");
+  return createScopedRecord("vendors", normalizeVendorPayload(payload), req, {
+    permission: "vendors.create",
+    defaults: { status: "active" },
+    auditAction: "MANAGER_VENDOR_CREATED",
+  });
+}
+
+function createExpenseClaim(payload = {}, req) {
+  const expenseService = require("../expenses/expense.service");
+  return expenseService.createExpense(payload, req.user);
+}
+
 function correctAttendance(id, payload, req) {
   return writeScopedRecord("attendance", id, compactObject({
     checkIn: payload.checkIn || payload.check_in,
@@ -1399,6 +1490,10 @@ module.exports = {
   getStats,
   listAuditLogs,
   listAttendance,
+  clockInSelf,
+  clockOutSelf,
+  createVendor,
+  createExpenseClaim,
   listDepartments,
   listEmployees,
   listFinance,
