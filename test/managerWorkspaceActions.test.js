@@ -64,9 +64,9 @@ test("manager can submit claims, add vendors, clock in, add NYSC members, and pu
     method: "POST",
     headers: adminHeaders,
     body: JSON.stringify({
-      fullName: "Abner Supervisor",
-      email: "abner.supervisor@example.com",
-      role: "employee",
+      fullName: "Smoke Accountant",
+      email: "smoke.accountant@example.com",
+      role: "accountant",
       departmentId: department.data.id,
     }),
   });
@@ -127,7 +127,7 @@ test("manager can submit claims, add vendors, clock in, add NYSC members, and pu
   const vendorBody = await json(vendor);
   assert.equal(vendorBody.data.name, "Plangnan");
 
-  const clockIn = await fetch(`${baseUrl}/api/v1/manager/attendance/clock-in`, {
+  const clockIn = await fetch(`${baseUrl}/api/v1/employee/attendance/clock-in`, {
     method: "POST",
     headers: managerHeaders,
     body: JSON.stringify({}),
@@ -136,7 +136,7 @@ test("manager can submit claims, add vendors, clock in, add NYSC members, and pu
   const clocked = await json(clockIn);
   assert.ok(clocked.data.checkIn || clocked.data.check_in);
 
-  const nysc = await fetch(`${baseUrl}/api/v1/nysc-interns`, {
+  const nysc = await fetch(`${baseUrl}/api/v1/hr/nysc-interns`, {
     method: "POST",
     headers: managerHeaders,
     body: JSON.stringify({
@@ -144,10 +144,10 @@ test("manager can submit claims, add vendors, clock in, add NYSC members, and pu
       email: "samuelnungse0@gmail.com",
       phone: "07088944773",
       type: "NYSC",
-      department: "Administration",
-      supervisor: "Abner Supervisor",
-      startDate: addDays(1),
-      endDate: addDays(120),
+      department: "admin",
+      supervisor: "Smoke Accountant",
+      startDate: "09/21/2026",
+      endDate: "09/20/2027",
     }),
   });
   assert.equal(nysc.status, 201, JSON.stringify(await nysc.clone().json()));

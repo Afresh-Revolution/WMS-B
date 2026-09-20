@@ -91,7 +91,18 @@ employeeRouter.get("/meetings/:id", handle((req, res) => send(res, "Employee mee
 employeeRouter.get("/attendance/locations", handle((req, res) => paged(res, "Employee attendance locations loaded.", attendanceService.listMyLocations(req.user, req.query))));
 employeeRouter.get("/attendance/status", handle((req, res) => send(res, "Employee check-in status loaded.", attendanceService.getCheckInStatus(req.user, req.query))));
 employeeRouter.get("/attendance/history", handle((req, res) => paged(res, "Employee attendance history loaded.", attendanceService.listMyHistory(req.user, req.query))));
-employeeRouter.post("/attendance/check-in", handle((req, res) => {
+function submitEmployeeOrManagerClockIn(req, res) {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (["manager", "hod", "hr", "department_manager"].includes(role)) {
+    const managerService = require("../manager/service");
+    const result = managerService.clockInSelf(req.body || {}, req);
+    return res.status(result.created ? 201 : 200).json({
+      success: true,
+      message: result.created ? "Clock-in recorded." : "Clock-in already recorded.",
+      data: result.record,
+      meta: { idempotent: !result.created },
+    });
+  }
   try {
     const result = attendanceService.createCheckIn(req.body || {}, req);
     return res.status(result.created ? 201 : 200).json({
@@ -104,7 +115,11 @@ employeeRouter.post("/attendance/check-in", handle((req, res) => {
     attendanceService.auditCheckInRejected(req, error);
     throw error;
   }
-}));
+}
+
+employeeRouter.post("/attendance/check-in", handle(submitEmployeeOrManagerClockIn));
+employeeRouter.post("/attendance/clock-in", handle(submitEmployeeOrManagerClockIn));
+employeeRouter.post("/attendance/clockIn", handle(submitEmployeeOrManagerClockIn));
 
 employeeRouter.get("/expenses", handle((req, res) => paged(res, "Employee expense claims loaded.", employeeService.listExpenses(req.user, req.query))));
 employeeRouter.get("/expense-claims", handle((req, res) => paged(res, "Employee expense claims loaded.", employeeService.listExpenses(req.user, req.query))));

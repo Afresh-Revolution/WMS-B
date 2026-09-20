@@ -266,14 +266,28 @@ announcementsRouter.get(
   })
 );
 
+function createPublishedAnnouncement(req, res) {
+  const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
+  auditAnnouncement(req, result.record.status === "published" ? "ANNOUNCEMENT_PUBLISHED" : "ANNOUNCEMENT_CREATED", result);
+  return res.status(201).json({ success: true, message: "Announcement created.", data: result.record, meta: result.meta || {} });
+}
+
 announcementsRouter.post(
   "/",
   requireAnnouncementPermission(ANNOUNCEMENT_PERMISSIONS.CREATE),
-  handle((req, res) => {
-    const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
-    auditAnnouncement(req, result.record.status === "published" ? "ANNOUNCEMENT_PUBLISHED" : "ANNOUNCEMENT_CREATED", result);
-    return res.status(201).json({ success: true, message: "Announcement created.", data: result.record, meta: result.meta || {} });
-  })
+  handle(createPublishedAnnouncement)
+);
+
+announcementsRouter.post(
+  "/create",
+  requireAnnouncementPermission(ANNOUNCEMENT_PERMISSIONS.CREATE),
+  handle(createPublishedAnnouncement)
+);
+
+announcementsRouter.post(
+  "/publish",
+  requireAnnouncementPermission(ANNOUNCEMENT_PERMISSIONS.CREATE),
+  handle(createPublishedAnnouncement)
 );
 
 announcementsRouter.get(

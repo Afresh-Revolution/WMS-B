@@ -94,7 +94,9 @@ managerRouter.get("/attendance", handle((req, res) => paged(res, "Manager attend
 managerRouter.post("/attendance", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/clock-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/clockIn", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/clockin", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/check-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
+managerRouter.post("/attendance/checkIn", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/clock-out", handle((req, res) => {
   const result = managerService.clockOutSelf(req.body || {}, req);
   return send(res, "Clock-out recorded.", result.record);

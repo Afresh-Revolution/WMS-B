@@ -215,13 +215,20 @@ function findEmployee(idOrName) {
   if (!requested) {
     return null;
   }
-  return (
+  const byIdOrName =
     activeRecords("employees").find((employee) => {
       const name = String(employee.fullName || employee.name || "").trim().toLowerCase();
       const email = String(employee.email || "").trim().toLowerCase();
-      return employee.id === idOrName || name === requested || email === requested || (requested.length > 2 && name.includes(requested));
-    }) || null
-  );
+      return (
+        employee.id === idOrName ||
+        employee.userId === idOrName ||
+        employee.user_id === idOrName ||
+        name === requested ||
+        email === requested ||
+        (requested.length > 2 && name.includes(requested))
+      );
+    }) || null;
+  return byIdOrName || findEmployeeByUserId(idOrName);
 }
 
 function findEmployeeByUserId(userId) {

@@ -70,19 +70,32 @@ function listDepartmentOptions() {
     .sort((left, right) => String(left.name).localeCompare(String(right.name)));
 }
 
+const DEPARTMENT_ALIASES = Object.freeze({
+  admin: "administration",
+  administration: "administration",
+  adm: "administration",
+});
+
 function resolveDepartment(departmentIdOrName) {
   if (!departmentIdOrName) {
     return null;
   }
 
   const requested = String(departmentIdOrName).trim().toLowerCase();
+  const aliased = DEPARTMENT_ALIASES[requested] || requested;
   return (
-    ensureDefaultDepartments().find(
-      (department) =>
+    ensureDefaultDepartments().find((department) => {
+      const name = String(department.name || "").toLowerCase();
+      const code = String(department.code || "").toLowerCase();
+      return (
         department.id === departmentIdOrName ||
-        String(department.name || "").toLowerCase() === requested ||
-        String(department.code || "").toLowerCase() === requested
-    ) || null
+        name === requested ||
+        name === aliased ||
+        code === requested ||
+        code === aliased ||
+        (requested.length >= 4 && name.startsWith(requested))
+      );
+    }) || null
   );
 }
 

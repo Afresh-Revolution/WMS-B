@@ -109,14 +109,22 @@ nyscInternRouter.patch(
   })
 );
 
+function createNyscIntern(req, res) {
+  const result = nyscInternService.createProfile(req.body || {}, req.user);
+  auditPlacement(req, result.record.profile.type === "NYSC" ? "NYSC_CREATED" : "INTERN_CREATED", result);
+  return res.status(201).json({ success: true, message: "NYSC/intern profile created.", data: result.record, meta: {} });
+}
+
 nyscInternRouter.post(
   "/",
   requireNyscInternPermission(NYSC_INTERN_PERMISSIONS.CREATE),
-  handle((req, res) => {
-    const result = nyscInternService.createProfile(req.body || {}, req.user);
-    auditPlacement(req, result.record.profile.type === "NYSC" ? "NYSC_CREATED" : "INTERN_CREATED", result);
-    return res.status(201).json({ success: true, message: "NYSC/intern profile created.", data: result.record, meta: {} });
-  })
+  handle(createNyscIntern)
+);
+
+nyscInternRouter.post(
+  "/members",
+  requireNyscInternPermission(NYSC_INTERN_PERMISSIONS.CREATE),
+  handle(createNyscIntern)
 );
 
 nyscInternRouter.get(

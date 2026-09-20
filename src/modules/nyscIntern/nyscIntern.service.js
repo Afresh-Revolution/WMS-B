@@ -45,12 +45,31 @@ function normalizeEnum(value, allowed, fallback) {
   return allowed.includes(normalized) ? normalized : fallback;
 }
 
+function parseDateInput(value) {
+  if (!value) {
+    return null;
+  }
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const date = new Date(`${raw}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) ? null : raw;
+  }
+  const slash = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (slash) {
+    const iso = `${slash[3]}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}`;
+    const date = new Date(`${iso}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) ? null : iso;
+  }
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
 function assertDate(value, code, message) {
-  const date = new Date(`${value}T00:00:00.000Z`);
-  if (!value || Number.isNaN(date.getTime())) {
+  const iso = parseDateInput(value);
+  if (!iso) {
     throw createHttpError(400, message, code);
   }
-  return value;
+  return iso;
 }
 
 function dateDiffDays(start, end) {

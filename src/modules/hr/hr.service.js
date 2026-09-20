@@ -82,6 +82,14 @@ function assertHrAccess(user, permission) {
   const role = String(user?.role || "").toLowerCase();
   if (role === "superadmin") return;
   if (role === "hr" && (!permission || hasPermission(user, permission))) return;
+  if (
+    role === "manager" &&
+    permission &&
+    String(permission).startsWith("nysc_intern.") &&
+    hasPermission(user, permission)
+  ) {
+    return;
+  }
   throw createHttpError(403, "Forbidden.", "FORBIDDEN");
 }
 
