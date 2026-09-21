@@ -37,6 +37,7 @@ function get(collection, message, notFoundCode, permission) {
 }
 
 accountantRouter.use(authenticate);
+registerSelfServiceAttendance(accountantRouter, "Accountant");
 
 accountantRouter.get("/scope", handle((req, res) => send(res, "Accountant scope loaded.", accountantService.getScopeSummary(req.user))));
 accountantRouter.get("/dashboard", handle((req, res) => send(res, "Accountant dashboard loaded.", accountantService.getDashboard(req.user, req.query))));

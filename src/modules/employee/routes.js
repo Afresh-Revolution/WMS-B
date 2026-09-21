@@ -123,6 +123,7 @@ employeeRouter.post("/attendance/clockIn", handle(submitEmployeeOrManagerClockIn
 
 employeeRouter.get("/expenses", handle((req, res) => paged(res, "Employee expense claims loaded.", employeeService.listExpenses(req.user, req.query))));
 employeeRouter.get("/expense-claims", handle((req, res) => paged(res, "Employee expense claims loaded.", employeeService.listExpenses(req.user, req.query))));
+employeeRouter.get("/reimbursements", handle((req, res) => paged(res, "Employee reimbursements loaded.", employeeService.listExpenses(req.user, req.query))));
 employeeRouter.post("/expenses", handle((req, res) => {
   const result = employeeService.createExpense(req.body || {}, req.user);
   return res.status(201).json({ success: true, message: "Employee expense claim created.", data: result.record, meta: {} });

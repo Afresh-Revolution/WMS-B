@@ -663,7 +663,9 @@ function getAuditLogs(id, user) {
 }
 
 function getDashboard(user) {
-  assertPermission(user, ANNOUNCEMENT_PERMISSIONS.VIEW_ANALYTICS);
+  if (!can(user, ANNOUNCEMENT_PERMISSIONS.VIEW) && !can(user, ANNOUNCEMENT_PERMISSIONS.VIEW_ANALYTICS)) {
+    throw createHttpError(403, "Forbidden.", "FORBIDDEN");
+  }
   expireDueAnnouncements();
   const announcements = repository.listAllAnnouncements({});
   return {
