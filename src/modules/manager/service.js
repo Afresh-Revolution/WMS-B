@@ -821,6 +821,24 @@ function findSelfAttendance(employee, user, workDate) {
   }) || null;
 }
 
+function getSelfClockStatus(user) {
+  const employee = getActorEmployee(user);
+  const workDate = today();
+  const existing = employee ? findSelfAttendance(employee, user, workDate) : null;
+  const alreadyCheckedIn = Boolean(existing && (existing.checkIn || existing.check_in));
+  return {
+    employeeId: employee?.id || null,
+    organizationId: user?.organizationId || user?.organization_id || null,
+    serverTime: now(),
+    workDate,
+    alreadyCheckedIn,
+    canCheckIn: Boolean(employee) && !alreadyCheckedIn,
+    checkIn: existing,
+    locations: [],
+    schedules: [],
+  };
+}
+
 function clockInSelf(payload = {}, req) {
   const scope = buildScope(req.user);
   const employee = getActorEmployee(req.user);
@@ -1492,6 +1510,7 @@ module.exports = {
   listAttendance,
   clockInSelf,
   clockOutSelf,
+  getSelfClockStatus,
   createVendor,
   createExpenseClaim,
   listDepartments,

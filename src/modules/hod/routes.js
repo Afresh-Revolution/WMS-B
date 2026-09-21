@@ -1,5 +1,6 @@
 const express = require("express");
 const { authenticate } = require("../../auth/middleware");
+const announcementService = require("../announcements/service");
 const managerService = require("../manager/service");
 
 const hodRouter = express.Router();
@@ -140,6 +141,66 @@ hodRouter.patch("/meetings/:id", handle((req, res) => {
 hodRouter.put("/meetings/:id", handle((req, res) => {
   const result = managerService.writeScopedRecord("meetings", req.params.id, req.body || {}, req, { permission: "meetings.update", allowCreatedBy: true, auditAction: "HOD_MEETING_UPDATED" });
   return result ? send(res, "HOD meeting updated.", result.record) : notFound(res, "MEETING_NOT_FOUND");
+}));
+
+hodRouter.get("/attendance", handle((req, res) => paged(res, "HOD attendance loaded.", managerService.listAttendance(req.user, req.query))));
+hodRouter.get("/attendance/locations", handle((req, res) => paged(res, "HOD attendance locations loaded.", { data: [], meta: { page: 1, limit: 25, total: 0 } })));
+hodRouter.get("/attendance/status", handle((req, res) => send(res, "HOD check-in status loaded.", managerService.getSelfClockStatus(req.user))));
+hodRouter.get("/attendance/me/status", handle((req, res) => send(res, "HOD check-in status loaded.", managerService.getSelfClockStatus(req.user))));
+hodRouter.get("/attendance/history", handle((req, res) => paged(res, "HOD attendance history loaded.", managerService.listAttendance(req.user, req.query))));
+hodRouter.get("/attendance/me/history", handle((req, res) => paged(res, "HOD attendance history loaded.", managerService.listAttendance(req.user, req.query))));
+hodRouter.post("/attendance/check-in", handle((req, res) => {
+  const result = managerService.clockInSelf(req.body || {}, req);
+  return res.status(result.created ? 201 : 200).json({ success: true, message: result.created ? "Clock-in recorded." : "Clock-in already recorded.", data: result.record, meta: { idempotent: !result.created } });
+}));
+hodRouter.post("/attendance/clock-in", handle((req, res) => {
+  const result = managerService.clockInSelf(req.body || {}, req);
+  return res.status(result.created ? 201 : 200).json({ success: true, message: result.created ? "Clock-in recorded." : "Clock-in already recorded.", data: result.record, meta: { idempotent: !result.created } });
+}));
+
+hodRouter.get("/announcements/dashboard", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "HOD announcements dashboard loaded.", announcementService.getDashboard(req.user));
+}));
+hodRouter.get("/announcements", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.listAdminAnnouncements(req.user, req.query);
+  return paged(res, "HOD announcements loaded.", result);
+}));
+hodRouter.post("/announcements/drafts", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.createDraft(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "Announcement draft created.", data: result.record, meta: result.meta || {} });
+}));
+hodRouter.post("/announcements", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
+  return res.status(201).json({ success: true, message: "Announcement published.", data: result.record, meta: result.meta || {} });
+}));
+hodRouter.post("/announcements/:id/publish", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.publishAnnouncement(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "Announcement published.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+hodRouter.post("/announcements/:id/pin", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.setPin(req.params.id, true, req.user);
+  return result ? send(res, "Announcement pinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+hodRouter.post("/announcements/:id/unpin", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.setPin(req.params.id, false, req.user);
+  return result ? send(res, "Announcement unpinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+hodRouter.patch("/announcements/:id/pin", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.setPin(req.params.id, true, req.user);
+  return result ? send(res, "Announcement pinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+hodRouter.patch("/announcements/:id/unpin", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.setPin(req.params.id, false, req.user);
+  return result ? send(res, "Announcement unpinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
 }));
 
 hodRouter.get("/leave", handle((req, res) => paged(res, "HOD leave requests loaded.", scopedList("leave_requests", req))));

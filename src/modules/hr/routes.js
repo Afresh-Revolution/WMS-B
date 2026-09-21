@@ -193,6 +193,11 @@ hrRouter.get("/leave", handle((req, res) => {
   const result = hrService.listLeave(req.query, req.user);
   return send(res, "HR leave requests loaded.", result.data, result.meta);
 }));
+hrRouter.get("/leave/types", handle((req, res) => {
+  const leaveService = require("../leave/leave.service");
+  const result = leaveService.listLeaveTypes(req.query);
+  return send(res, "HR leave types loaded.", result.data, result.meta);
+}));
 hrRouter.get("/leave/:id", handle((req, res) => {
   const request = hrService.getLeave(req.params.id, req.user);
   return request ? send(res, "HR leave request loaded.", request) : notFound(res, "LEAVE_REQUEST_NOT_FOUND");
@@ -313,6 +318,54 @@ hrRouter.patch("/confirmations/:id/extend", handle((req, res) => {
 hrRouter.patch("/confirmations/:id/not-confirm", handle((req, res) => {
   const result = hrService.notConfirmEmployee(req.params.id, req.body || {}, req);
   return result ? send(res, "HR confirmation returned.", result.record) : notFound(res, "CONFIRMATION_NOT_FOUND");
+}));
+
+hrRouter.get("/attendance", handle((req, res) => {
+  const result = hrService.listAttendance(req.query, req.user);
+  return send(res, "HR attendance loaded.", result.data, result.meta);
+}));
+hrRouter.patch("/attendance/:id/correct", handle((req, res) => {
+  const result = hrService.correctAttendance(req.params.id, req.body || {}, req);
+  return result ? send(res, "HR attendance corrected.", result.record) : notFound(res, "ATTENDANCE_NOT_FOUND");
+}));
+
+hrRouter.get("/performance", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "performance.view");
+  const result = hrService.listCollection("performance_reviews", req.query, req.user, ["employeeName", "status", "reviewType"]);
+  return send(res, "HR performance loaded.", result.data, result.meta);
+}));
+
+hrRouter.get("/meetings", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "meetings.view");
+  const result = hrService.listCollection("meetings", req.query, req.user, ["title", "agenda", "location", "status"]);
+  return send(res, "HR meetings loaded.", result.data, result.meta);
+}));
+hrRouter.post("/meetings", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "meetings.create");
+  const record = hrService.createRecord("meetings", { ...(req.body || {}), status: req.body?.status || "SCHEDULED" }, req.user);
+  return res.status(201).json({ success: true, message: "HR meeting created.", data: record, meta: {} });
+}));
+
+hrRouter.get("/tasks", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "tasks.view");
+  const result = hrService.listCollection("tasks", req.query, req.user, ["title", "description", "status"]);
+  return send(res, "HR tasks loaded.", result.data, result.meta);
+}));
+hrRouter.post("/tasks", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "tasks.create");
+  const record = hrService.createRecord("tasks", { ...(req.body || {}), status: req.body?.status || "PENDING" }, req.user);
+  return res.status(201).json({ success: true, message: "HR task created.", data: record, meta: {} });
+}));
+
+hrRouter.get("/targets", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "targets.view");
+  const result = hrService.listCollection("targets", req.query, req.user, ["title", "name", "status"]);
+  return send(res, "HR targets loaded.", result.data, result.meta);
+}));
+hrRouter.post("/targets", handle((req, res) => {
+  hrService.assertHrAccess(req.user, "targets.create");
+  const record = hrService.createRecord("targets", { ...(req.body || {}), status: req.body?.status || "ACTIVE" }, req.user);
+  return res.status(201).json({ success: true, message: "HR target created.", data: record, meta: {} });
 }));
 
 hrRouter.get("/reports", handle((req, res) => send(res, "HR reports loaded.", hrService.listReports(req.query, req.user))));

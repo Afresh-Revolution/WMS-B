@@ -91,6 +91,11 @@ function sendClockIn(res, result) {
 }
 
 managerRouter.get("/attendance", handle((req, res) => paged(res, "Manager attendance loaded.", managerService.listAttendance(req.user, req.query))));
+managerRouter.get("/attendance/locations", handle((req, res) => paged(res, "Manager attendance locations loaded.", { data: [], meta: { page: 1, limit: 25, total: 0 } })));
+managerRouter.get("/attendance/status", handle((req, res) => send(res, "Manager check-in status loaded.", managerService.getSelfClockStatus(req.user))));
+managerRouter.get("/attendance/me/status", handle((req, res) => send(res, "Manager check-in status loaded.", managerService.getSelfClockStatus(req.user))));
+managerRouter.get("/attendance/history", handle((req, res) => paged(res, "Manager attendance history loaded.", managerService.listAttendance(req.user, req.query))));
+managerRouter.get("/attendance/me/history", handle((req, res) => paged(res, "Manager attendance history loaded.", managerService.listAttendance(req.user, req.query))));
 managerRouter.post("/attendance", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/clock-in", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
 managerRouter.post("/attendance/clockIn", handle((req, res) => sendClockIn(res, managerService.clockInSelf(req.body || {}, req))));
@@ -293,6 +298,10 @@ managerRouter.put("/events/:id", handle((req, res) => {
   const result = managerService.writeScopedRecord("events", req.params.id, req.body || {}, req, { permission: "events.update", allowCreatedBy: true, auditAction: "MANAGER_EVENT_UPDATED" });
   return result ? send(res, "Manager event updated.", result.record) : notFound(res, "EVENT_NOT_FOUND");
 }));
+managerRouter.post("/events/:id/send", handle((req, res) => {
+  const result = managerService.writeScopedRecord("events", req.params.id, { status: "SENT", sentAt: new Date().toISOString(), sent_at: new Date().toISOString() }, req, { permission: "events.update", allowCreatedBy: true, auditAction: "MANAGER_EVENT_SENT" });
+  return result ? send(res, "Manager event sent.", result.record) : notFound(res, "EVENT_NOT_FOUND");
+}));
 
 managerRouter.get("/discipline", handle((req, res) => {
   const scope = managerService.buildScope(req.user);
@@ -370,10 +379,24 @@ managerRouter.post("/nysc-interns/:id/supervisor", handle((req, res) => {
   return result ? send(res, "Placement supervisor assigned.", result.record) : notFound(res, "NYSC_INTERN_PROFILE_NOT_FOUND");
 }));
 
+managerRouter.get("/nysc", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.listProfiles(req.user, req.query);
+  return paged(res, "Manager NYSC and intern members loaded.", result);
+}));
+managerRouter.get("/announcements/dashboard", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager announcements dashboard loaded.", announcementService.getDashboard(req.user));
+}));
 managerRouter.get("/announcements", handle((req, res) => {
   managerService.buildScope(req.user);
   const result = announcementService.listAdminAnnouncements(req.user, req.query);
   return paged(res, "Manager announcements loaded.", result);
+}));
+managerRouter.post("/announcements/drafts", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = announcementService.createDraft(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "Announcement draft created.", data: result.record, meta: result.meta || {} });
 }));
 managerRouter.post("/announcements", handle((req, res) => {
   managerService.buildScope(req.user);
@@ -405,6 +428,15 @@ managerRouter.post("/announcements/:id/publish", handle((req, res) => {
   const result = announcementService.publishAnnouncement(req.params.id, req.body || {}, req.user);
   return result ? send(res, "Announcement published.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
 }));
+function pinAnnouncement(req, res, pinned) {
+  managerService.buildScope(req.user);
+  const result = announcementService.setPin(req.params.id, pinned, req.user);
+  return result ? send(res, pinned ? "Announcement pinned." : "Announcement unpinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}
+managerRouter.patch("/announcements/:id/pin", handle((req, res) => pinAnnouncement(req, res, true)));
+managerRouter.post("/announcements/:id/pin", handle((req, res) => pinAnnouncement(req, res, true)));
+managerRouter.patch("/announcements/:id/unpin", handle((req, res) => pinAnnouncement(req, res, false)));
+managerRouter.post("/announcements/:id/unpin", handle((req, res) => pinAnnouncement(req, res, false)));
 
 managerRouter.get("/payroll/dashboard", handle((req, res) => {
   managerService.buildScope(req.user);
@@ -420,6 +452,13 @@ managerRouter.post("/payroll/periods", handle((req, res) => {
   const period = payrollService.createPayrollPeriod(req.body || {}, req.user);
   return res.status(201).json({ success: true, message: "Payroll period created.", data: period, meta: {} });
 }));
+managerRouter.get("/payroll/export", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const csv = payrollService.exportPayroll(req.user, req.query);
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", "attachment; filename=\"payroll.csv\"");
+  return res.status(200).send(csv);
+}));
 managerRouter.get("/payroll/runs", handle((req, res) => {
   managerService.buildScope(req.user);
   const result = payrollService.listRuns(req.query);
@@ -429,6 +468,10 @@ managerRouter.post("/payroll/runs", handle((req, res) => {
   managerService.buildScope(req.user);
   const result = payrollService.createPayrollRun(req.body || {}, req.user);
   return res.status(201).json({ success: true, message: "Payroll run calculated.", data: result.record, meta: { readiness: result.readiness } });
+}));
+managerRouter.get("/payroll/runs/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "Manager payroll run loaded.", payrollService.getRunDetails(req.params.id, req.user));
 }));
 managerRouter.get("/payroll", handle((req, res) => {
   managerService.buildScope(req.user);

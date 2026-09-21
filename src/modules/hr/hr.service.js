@@ -2247,6 +2247,7 @@ module.exports = {
   getStats,
   listApprovalQueue,
   listAttendance,
+  correctAttendance,
   listAuditLogs,
   listCollection,
   listConfirmations,

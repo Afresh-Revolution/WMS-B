@@ -82,4 +82,15 @@ lookupsRouter.get("/meeting-types", (_req, res) => {
   });
 });
 
+lookupsRouter.get("/leave-types", (_req, res) => {
+  const leaveService = require("../leave/leave.service");
+  const result = leaveService.listLeaveTypes({ limit: 100 });
+  return res.json({
+    success: true,
+    message: "Leave types loaded.",
+    data: result.data,
+    meta: result.meta || {},
+  });
+});
+
 module.exports = { lookupsRouter };

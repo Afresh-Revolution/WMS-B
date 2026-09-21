@@ -187,4 +187,72 @@ test("manager can submit claims, add vendors, clock in, add NYSC members, and pu
     }),
   });
   assert.equal(superAdminNysc.status, 201, JSON.stringify(await superAdminNysc.clone().json()));
+
+  const managerClock = await fetch(`${baseUrl}/api/v1/manager/attendance/clock-in`, {
+    method: "POST",
+    headers: managerHeaders,
+    body: JSON.stringify({}),
+  });
+  assert.ok([200, 201].includes(managerClock.status), JSON.stringify(await managerClock.clone().json()));
+
+  const clockStatus = await fetch(`${baseUrl}/api/v1/manager/attendance/status`, { headers: managerHeaders });
+  assert.equal(clockStatus.status, 200, JSON.stringify(await clockStatus.clone().json()));
+  const clockStatusBody = await json(clockStatus);
+  assert.equal(clockStatusBody.data.alreadyCheckedIn, true);
+
+  const announcementDashboard = await fetch(`${baseUrl}/api/v1/manager/announcements/dashboard`, {
+    headers: managerHeaders,
+  });
+  assert.equal(announcementDashboard.status, 200, JSON.stringify(await announcementDashboard.clone().json()));
+
+  const managerAnnouncement = await fetch(`${baseUrl}/api/v1/manager/announcements`, {
+    method: "POST",
+    headers: managerHeaders,
+    body: JSON.stringify({
+      body: "Team stand-up moved to 10am",
+      category: "Events",
+      audience: "All staff",
+      whenToSend: "Publish now",
+    }),
+  });
+  assert.equal(managerAnnouncement.status, 201, JSON.stringify(await managerAnnouncement.clone().json()));
+
+  const managerNysc = await fetch(`${baseUrl}/api/v1/manager/nysc-interns`, {
+    method: "POST",
+    headers: managerHeaders,
+    body: JSON.stringify({
+      fullName: "Blessing Intern",
+      email: "blessing.intern@example.com",
+      type: "NYSC",
+      department: "admin",
+      supervisor: "Smoke Accountant",
+      startDate: addDays(3),
+      endDate: addDays(120),
+    }),
+  });
+  assert.equal(managerNysc.status, 201, JSON.stringify(await managerNysc.clone().json()));
+
+  const managerClaim = await fetch(`${baseUrl}/api/v1/manager/expenses`, {
+    method: "POST",
+    headers: managerHeaders,
+    body: JSON.stringify({
+      description: "Taxi to site",
+      category: "Transport",
+      date: new Date().toISOString().slice(0, 10),
+      amount: 4500,
+    }),
+  });
+  assert.equal(managerClaim.status, 201, JSON.stringify(await managerClaim.clone().json()));
+
+  const managerVendor = await fetch(`${baseUrl}/api/v1/manager/vendors`, {
+    method: "POST",
+    headers: managerHeaders,
+    body: JSON.stringify({
+      vendorName: "Jos Supplies",
+      category: "Office",
+      location: "Jos",
+      email: "jos.supplies@example.com",
+    }),
+  });
+  assert.equal(managerVendor.status, 201, JSON.stringify(await managerVendor.clone().json()));
 });
