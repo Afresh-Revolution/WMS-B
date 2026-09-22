@@ -109,10 +109,10 @@ nyscInternRouter.patch(
   })
 );
 
-function createNyscIntern(req, res) {
-  const result = nyscInternService.createProfile(req.body || {}, req.user);
+async function createNyscIntern(req, res) {
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
   auditPlacement(req, result.record.profile.type === "NYSC" ? "NYSC_CREATED" : "INTERN_CREATED", result);
-  return res.status(201).json({ success: true, message: "NYSC/intern profile created.", data: result.record, meta: {} });
+  return res.status(201).json({ success: true, message: "NYSC/intern profile created.", ...nyscInternService.credentialsFor(result) });
 }
 
 nyscInternRouter.post(

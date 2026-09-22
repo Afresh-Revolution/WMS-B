@@ -1,6 +1,7 @@
 const express = require("express");
 const { authenticate } = require("../../auth/middleware");
 const hrService = require("./hr.service");
+const nyscInternService = require("../nyscIntern/nyscIntern.service");
 
 const hrRouter = express.Router();
 
@@ -41,7 +42,11 @@ hrRouter.get("/nysc-interns", handle((req, res) => {
   const result = hrService.listNyscInternProfiles(req.query, req.user);
   return send(res, "HR NYSC and interns loaded.", result.data, result.meta);
 }));
-hrRouter.post("/nysc-interns", handle((req, res) => res.status(201).json({ success: true, message: "HR NYSC/intern profile created.", data: hrService.createNyscInternProfile(req.body || {}, req), meta: {} })));
+hrRouter.post("/nysc-interns", handle(async (req, res) => {
+  const result = await hrService.createNyscInternProfile(req.body || {}, req);
+  const payload = nyscInternService.credentialsFor(result);
+  return res.status(201).json({ success: true, message: "HR NYSC/intern profile created.", ...payload });
+}));
 hrRouter.get("/nysc-interns/:id", handle((req, res) => send(res, "HR NYSC/intern profile loaded.", hrService.getNyscInternProfile(req.params.id, req.user))));
 hrRouter.patch("/nysc-interns/:id", handle((req, res) => {
   const result = hrService.updateNyscInternProfile(req.params.id, req.body || {}, req);

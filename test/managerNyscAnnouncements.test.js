@@ -118,6 +118,18 @@ test("manager can add NYSC members, publish announcements, and only privileged r
   const member = await createMember.json();
   assert.equal(member.data.profile.fullName, "Plangnan Nungse");
   assert.equal(member.data.placement.departmentId, department.data.id);
+  assert.equal(member.meta.temporaryPassword, "Plangnan");
+  const internLogin = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: "nungseplangnan@gmail.com",
+      password: "Plangnan",
+    }),
+  });
+  assert.equal(internLogin.status, 200);
+  const internAuth = await internLogin.json();
+  assert.equal(internAuth.mustChangePassword, true);
 
   const listMembers = await fetch(`${baseUrl}/api/v1/manager/nysc-interns`, { headers: managerHeaders });
   assert.equal(listMembers.status, 200);
@@ -165,4 +177,41 @@ test("manager can add NYSC members, publish announcements, and only privileged r
     }),
   });
   assert.equal(blocked.status, 403);
+
+  const hodResponse = await fetch(`${baseUrl}/api/v1/users`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      fullName: "Department Head",
+      email: "hod.nysc@example.com",
+      role: "hod",
+      status: "active",
+      departmentId: department.data.id,
+      temporaryPassword: "TempPass123!",
+    }),
+  });
+  assert.equal(hodResponse.status, 201);
+  const hodCreated = await hodResponse.json();
+  updateUser(hodCreated.data.id, { mustChangePassword: false, forcePasswordReset: false, departmentId: department.data.id });
+  const hodHeaders = {
+    "content-type": "application/json",
+    authorization: `Bearer ${issueAccessToken(getUserById(hodCreated.data.id))}`,
+  };
+  const hodCreate = await fetch(`${baseUrl}/api/v1/hod/nysc-interns`, {
+    method: "POST",
+    headers: hodHeaders,
+    body: JSON.stringify({
+      fullName: "Ifeanyi Intern",
+      email: "ifeanyi.intern@example.com",
+      type: "INTERN",
+      departmentId: department.data.id,
+      startDate: addDays(1),
+      endDate: addDays(90),
+      supervisorEmployeeId: supervisor.data.id,
+    }),
+  });
+  assert.equal(hodCreate.status, 201, JSON.stringify(await hodCreate.clone().json()));
+  const hodMember = await hodCreate.json();
+  assert.equal(hodMember.data.profile.fullName, "Ifeanyi Intern");
+  assert.equal(hodMember.meta.temporaryPassword, "Ifeanyi");
 });

@@ -72,7 +72,7 @@ test("super admin can list and add people through POST /api/v1/employees", async
   assert.equal(created.data.location, "Remote");
   assert.equal(created.data.locationType, "remote");
   assert.notEqual(created.data.location, created.data.id);
-  assert.ok(created.meta.temporaryPassword);
+  assert.equal(created.meta.temporaryPassword, "Lena");
 
   const listResponse = await fetch(`${baseUrl}/api/v1/employees`, { headers });
   assert.equal(listResponse.status, 200);
@@ -170,7 +170,7 @@ test("super admin can list and add people through POST /api/v1/employees", async
   assert.equal(hrCreated.data.role, "hr");
   assert.equal(hrCreated.data.department, "Human Resources");
   assert.equal(hrCreated.meta.mustChangePassword, true);
-  assert.ok(hrCreated.meta.temporaryPassword);
+  assert.equal(hrCreated.meta.temporaryPassword, "Ada");
 
   const hrLoginResponse = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: "POST",

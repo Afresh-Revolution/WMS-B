@@ -359,10 +359,10 @@ managerRouter.get("/nysc-interns", handle((req, res) => {
   const result = nyscInternService.listProfiles(req.user, req.query);
   return paged(res, "Manager NYSC and intern members loaded.", result);
 }));
-managerRouter.post("/nysc-interns", handle((req, res) => {
+managerRouter.post("/nysc-interns", handle(async (req, res) => {
   managerService.buildScope(req.user);
-  const result = nyscInternService.createProfile(req.body || {}, req.user);
-  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
 }));
 managerRouter.get("/nysc-interns/:id", handle((req, res) => {
   managerService.buildScope(req.user);
@@ -408,15 +408,15 @@ managerRouter.post("/announcement", handle((req, res) => {
   const result = announcementService.createAnnouncement({ ...(req.body || {}), status: req.body?.status || "published" }, req.user);
   return res.status(201).json({ success: true, message: "Announcement published.", data: result.record, meta: result.meta || {} });
 }));
-managerRouter.post("/nysc", handle((req, res) => {
+managerRouter.post("/nysc", handle(async (req, res) => {
   managerService.buildScope(req.user);
-  const result = nyscInternService.createProfile(req.body || {}, req.user);
-  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
 }));
-managerRouter.post("/nysc-interns/members", handle((req, res) => {
+managerRouter.post("/nysc-interns/members", handle(async (req, res) => {
   managerService.buildScope(req.user);
-  const result = nyscInternService.createProfile(req.body || {}, req.user);
-  return res.status(201).json({ success: true, message: "NYSC/intern member created.", data: result.record, meta: {} });
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
 }));
 managerRouter.get("/announcements/:id", handle((req, res) => {
   managerService.buildScope(req.user);

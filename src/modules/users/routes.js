@@ -88,8 +88,15 @@ usersRouter.post("/", authorize("users.create"), async (req, res, next) => {
     return res.status(201).json({
       success: true,
       message: "User created successfully.",
-      data: result.user,
-      meta: { provisioning: result.provisioning },
+      data: {
+        ...result.user,
+        temporaryPassword: result.temporaryPassword,
+      },
+      meta: {
+        provisioning: result.provisioning,
+        temporaryPassword: result.temporaryPassword,
+        mustChangePassword: true,
+      },
     });
   } catch (error) {
     return next(error);
@@ -195,8 +202,15 @@ usersRouter.post("/:id/reset-password", authorize("users.update"), handle(async 
   return res.json({
     success: true,
     message: "Password reset.",
-    data: result.user,
-    meta: { provisioning: result.provisioning },
+    data: {
+      ...result.user,
+      temporaryPassword: result.temporaryPassword,
+    },
+    meta: {
+      provisioning: result.provisioning,
+      temporaryPassword: result.temporaryPassword,
+      mustChangePassword: true,
+    },
   });
 }));
 

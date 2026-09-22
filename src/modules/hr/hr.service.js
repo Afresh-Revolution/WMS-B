@@ -83,7 +83,7 @@ function assertHrAccess(user, permission) {
   if (role === "superadmin") return;
   if (role === "hr" && (!permission || hasPermission(user, permission))) return;
   if (
-    role === "manager" &&
+    (role === "manager" || role === "hod") &&
     permission &&
     String(permission).startsWith("nysc_intern.") &&
     hasPermission(user, permission)
@@ -864,11 +864,11 @@ function getNyscInternProfile(id, user) {
   return nyscInternService.getDetails(id, user);
 }
 
-function createNyscInternProfile(payload, req) {
+async function createNyscInternProfile(payload, req) {
   assertHrAccess(req.user, "nysc_intern.create");
-  const result = nyscInternService.createProfile(payload, req.user);
+  const result = await nyscInternService.createProfile(payload, req.user);
   audit(req, result.record.profile.type === "NYSC" ? "NYSC Created" : "Intern Created", "NyscIntern", result.record.profile.id, null, result.record);
-  return result.record;
+  return result;
 }
 
 function updateNyscInternProfile(id, payload, req) {

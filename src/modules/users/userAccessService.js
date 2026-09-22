@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { hashPassword } = require("../../auth/passwords");
+const { generateFirstNameTemporaryPassword, hashPassword } = require("../../auth/passwords");
 const { revokeSession, revokeUserSessions, listSessions } = require("../../auth/sessionStore");
 const accountStore = require("../../auth/accountStore");
 const {
@@ -180,8 +180,20 @@ function ensureCanCreateRole(actor, role) {
   }
 }
 
-function generateTemporaryPassword() {
-  return crypto.randomBytes(18).toString("base64url");
+function generateTemporaryPassword(payload = {}) {
+  return generateFirstNameTemporaryPassword(payload);
+}
+
+function resolveTemporaryPassword(payload = {}, identity = payload) {
+  const provided = typeof payload.temporaryPassword === "string" ? payload.temporaryPassword.trim() : "";
+  if (provided) {
+    if (provided.length < 8) {
+      throw createHttpError(400, "Temporary password must be at least 8 characters.", "INVALID_TEMPORARY_PASSWORD");
+    }
+    securityService.validatePasswordAgainstPolicy(provided, identity?.id || null);
+    return { temporaryPassword: provided, generated: false };
+  }
+  return { temporaryPassword: generateTemporaryPassword(identity), generated: true };
 }
 
 function generateActivationToken() {
@@ -334,11 +346,7 @@ async function createUserAccount(payload, actor, req) {
   const { fullName, email, employee, role, department } = validateCreateUserPayload(payload || {});
   ensureCanCreateRole(actor, role);
 
-  const temporaryPassword = payload.temporaryPassword || generateTemporaryPassword();
-  if (typeof temporaryPassword !== "string" || temporaryPassword.length < 8) {
-    throw createHttpError(400, "Temporary password must be at least 8 characters.", "INVALID_TEMPORARY_PASSWORD");
-  }
-  securityService.validatePasswordAgainstPolicy(temporaryPassword);
+  const { temporaryPassword, generated } = resolveTemporaryPassword(payload, { fullName, firstName: payload.firstName || payload.first_name, name: fullName });
 
   const activationToken = generateActivationToken();
   const user = await createAuthUser({
@@ -430,10 +438,11 @@ async function createUserAccount(payload, actor, req) {
     user: decorated,
     provisioning: {
       activationTokenCreated: true,
-      temporaryPasswordGenerated: !payload.temporaryPassword,
+      temporaryPasswordGenerated: generated,
       mustChangePassword: true,
       credentialsDelivery: "email_or_notification_configuration",
     },
+    temporaryPassword,
   };
 }
 
@@ -600,11 +609,7 @@ async function resetUserPassword(id, payload, actor, req) {
     return null;
   }
   ensureCanManageUser(actor, current, "reset-password");
-  const temporaryPassword = payload?.temporaryPassword || generateTemporaryPassword();
-  if (temporaryPassword.length < 8) {
-    throw createHttpError(400, "Temporary password must be at least 8 characters.", "INVALID_PASSWORD");
-  }
-  securityService.validatePasswordAgainstPolicy(temporaryPassword, id);
+  const { temporaryPassword, generated } = resolveTemporaryPassword(payload || {}, current);
 
   const oldValue = decorateUser(current);
   securityService.recordPasswordHistory(current);
@@ -638,10 +643,11 @@ async function resetUserPassword(id, payload, actor, req) {
   return {
     user: newValue,
     provisioning: {
-      temporaryPasswordGenerated: !payload?.temporaryPassword,
+      temporaryPasswordGenerated: generated,
       mustChangePassword: true,
       credentialsDelivery: "email_or_notification_configuration",
     },
+    temporaryPassword,
   };
 }
 

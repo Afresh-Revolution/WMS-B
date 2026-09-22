@@ -13,6 +13,19 @@ function hashPassword(password) {
   return `pbkdf2_${HASH_ALGORITHM}$${ITERATIONS}$${salt}$${hash}`;
 }
 
+function firstNameFromIdentity(payload = {}) {
+  const explicit = String(payload.firstName || payload.first_name || payload.givenName || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+  const fullName = String(payload.fullName || payload.full_name || payload.name || "").trim();
+  return fullName.split(/\s+/).filter(Boolean)[0] || "";
+}
+
+function generateFirstNameTemporaryPassword(payload = {}) {
+  return firstNameFromIdentity(payload) || "Welcome";
+}
+
 function verifyPassword(password, storedPasswordHash) {
   const parts = String(storedPasswordHash || "").split("$");
   if (parts.length !== 4) {
@@ -40,4 +53,9 @@ function verifyPassword(password, storedPasswordHash) {
   );
 }
 
-module.exports = { hashPassword, verifyPassword };
+module.exports = {
+  firstNameFromIdentity,
+  generateFirstNameTemporaryPassword,
+  hashPassword,
+  verifyPassword,
+};

@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { hashPassword } = require("../../auth/passwords");
+const { generateFirstNameTemporaryPassword, hashPassword } = require("../../auth/passwords");
 const { revokeUserSessions } = require("../../auth/sessionStore");
 const accountStore = require("../../auth/accountStore");
 const { getUserById, listUsers } = require("../../auth/userStore");
@@ -100,8 +100,8 @@ function generateLoginEmail(fullName) {
   return `${slug}.${crypto.randomBytes(2).toString("hex")}@afresh.local`;
 }
 
-function generateTemporaryPassword() {
-  return `Temp${crypto.randomBytes(4).toString("hex")}A1!`;
+function generateTemporaryPassword(payload = {}) {
+  return generateFirstNameTemporaryPassword(payload);
 }
 
 function getCollectionForStaffType(staffType) {
@@ -542,7 +542,7 @@ function normalizeCreatePayload(body = {}) {
 async function createSystemUserIfRequested({ record, systemAccess }) {
   const generatedPassword = !systemAccess.initialPassword && !systemAccess.password;
   const email = systemAccess.email || record.email || systemAccess.username || generateLoginEmail(record.fullName || record.name);
-  const password = systemAccess.initialPassword || systemAccess.password || generateTemporaryPassword();
+  const password = systemAccess.initialPassword || systemAccess.password || generateTemporaryPassword(record);
   const assignedRole = resolveAssignedRole(systemAccess.role || record.role || "employee");
   const permissions =
     Array.isArray(systemAccess.permissions) && systemAccess.permissions.length > 0
@@ -556,8 +556,8 @@ async function createSystemUserIfRequested({ record, systemAccess }) {
     throw error;
   }
 
-  if (typeof password !== "string" || password.length < 8) {
-    const error = new Error("Initial password must be at least 8 characters when creating system access.");
+  if (typeof password !== "string" || !password.trim()) {
+    const error = new Error("A temporary password is required when creating system access.");
     error.statusCode = 400;
     error.publicMessage = error.message;
     throw error;

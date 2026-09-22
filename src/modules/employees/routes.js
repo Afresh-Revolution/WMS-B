@@ -12,6 +12,7 @@ const {
   updateStaff,
 } = require("../employers/staffDirectoryService");
 const { getLookups, resolveEmploymentType } = require("../lookups/catalog");
+const { generateFirstNameTemporaryPassword } = require("../../auth/passwords");
 
 const employeesRouter = express.Router();
 const EMPLOYEE_ACTIONS = ["deactivate", "activate", "suspend", "terminate", "transfer", "promote", "reset-password"];
@@ -51,8 +52,8 @@ function generateLoginEmail(fullName) {
   return `${slug}.${crypto.randomBytes(2).toString("hex")}@afresh.local`;
 }
 
-function generateTemporaryPassword() {
-  return `Temp${crypto.randomBytes(4).toString("hex")}A1!`;
+function generateTemporaryPassword(payload = {}) {
+  return generateFirstNameTemporaryPassword(payload);
 }
 
 function normalizeEmployeeCreateBody(body = {}) {
@@ -60,7 +61,11 @@ function normalizeEmployeeCreateBody(body = {}) {
     || [valueOf(body, ["firstName", "first_name"]), valueOf(body, ["lastName", "last_name"])].filter(Boolean).join(" ");
   const email = valueOf(body, ["email", "workEmail", "work_email"]) || generateLoginEmail(fullName);
   const generatedEmail = !valueOf(body, ["email", "workEmail", "work_email"]);
-  const password = generateTemporaryPassword();
+  const password = generateTemporaryPassword({
+    firstName: valueOf(body, ["firstName", "first_name"]),
+    fullName,
+    name: fullName,
+  });
   const employmentType = resolveEmploymentType(body.employmentType || body.employment_type || body.staffType);
 
   return {
@@ -227,8 +232,9 @@ for (const action of EMPLOYEE_ACTIONS.filter((item) => item !== "reset-password"
 }
 
 employeesRouter.post("/:id/reset-password", authenticate, requireRole("superadmin"), async (req, res) => {
-  const password = req.body?.password || generateTemporaryPassword();
-  if (typeof password !== "string" || password.length < 8) {
+  const staff = getStaffProfile(req.params.id);
+  const password = req.body?.password || generateTemporaryPassword(staff || {});
+  if (req.body?.password && (typeof password !== "string" || password.length < 8)) {
     return fail(res, 400, "INVALID_PASSWORD", "Password must be at least 8 characters.", { minLength: 8 });
   }
   const user = await resetStaffPassword(req.params.id, password, req.user, req);

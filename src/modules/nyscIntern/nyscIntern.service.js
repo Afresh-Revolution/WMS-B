@@ -250,7 +250,81 @@ function createLegacyMirror(profile, placement) {
   return repository.createLegacyMember(collection, payload);
 }
 
-function createProfile(payload, user) {
+function generateLoginEmail(fullName) {
+  const slug = String(fullName || "intern")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 40) || "intern";
+  return `${slug}.${crypto.randomBytes(2).toString("hex")}@afresh.local`;
+}
+
+async function provisionPlacementLogin(profile, payload, user) {
+  const { generateFirstNameTemporaryPassword, hashPassword } = require("../../auth/passwords");
+  const accountStore = require("../../auth/accountStore");
+  const { ROLE_DEFINITIONS } = require("../../constants/rbac");
+  const email = String(payload.email || profile.email || "").trim().toLowerCase() || generateLoginEmail(profile.fullName);
+  const existing = await accountStore.getUserByEmail(email);
+  if (existing) {
+    if (!profile.userId) {
+      repository.updateProfile(profile.id, { userId: existing.id, email: profile.email || email });
+    }
+    return {
+      profile: repository.findProfile(profile.id) || profile,
+      temporaryPassword: null,
+      loginEmail: email,
+    };
+  }
+
+  const roleKey = profile.type === PROFILE_TYPE.INTERN ? "intern" : "nysc_intern";
+  const role = ROLE_DEFINITIONS[roleKey] || ROLE_DEFINITIONS.intern;
+  const temporaryPassword = generateFirstNameTemporaryPassword({
+    firstName: payload.firstName || payload.first_name,
+    fullName: profile.fullName,
+    name: profile.fullName,
+  });
+  const created = await accountStore.createUser({
+    name: profile.fullName,
+    fullName: profile.fullName,
+    email,
+    phone: profile.phone,
+    passwordHash: hashPassword(temporaryPassword),
+    role: role.key,
+    roleId: role.key,
+    permissions: role.permissions,
+    status: "active",
+    accountType: "STAFF",
+    departmentId: payload.departmentId || payload.department_id || null,
+    createdBy: user?.id || null,
+    mustChangePassword: true,
+  });
+  const updated = repository.updateProfile(profile.id, {
+    userId: created.id,
+    email: profile.email || email,
+  });
+  return {
+    profile: updated || profile,
+    temporaryPassword,
+    loginEmail: email,
+  };
+}
+
+function credentialsFor(result) {
+  return {
+    data: {
+      ...result.record,
+      temporaryPassword: result.temporaryPassword || null,
+      loginEmail: result.loginEmail || null,
+    },
+    meta: {
+      temporaryPassword: result.temporaryPassword || null,
+      loginEmail: result.loginEmail || null,
+      mustChangePassword: Boolean(result.temporaryPassword),
+    },
+  };
+}
+
+async function createProfile(payload, user) {
   assertPermission(user, NYSC_INTERN_PERMISSIONS.CREATE);
   const fullName = payload.fullName || payload.full_name || payload.name;
   const type = normalizeEnum(payload.type || payload.staffType || payload.staff_type, Object.values(PROFILE_TYPE), PROFILE_TYPE.NYSC);
@@ -361,7 +435,21 @@ function createProfile(payload, user) {
   if (supervisorId) {
     assignSupervisor(profile.id, { employeeId: supervisorId }, user);
   }
-  return { record: decorateProfile(profile, user, true) };
+  let provisioned = {
+    profile,
+    temporaryPassword: null,
+    loginEmail: payload.email || profile.email || null,
+  };
+  try {
+    provisioned = await provisionPlacementLogin(profile, payload, user);
+  } catch {
+    /* Keep the placement even if login provisioning fails. */
+  }
+  return {
+    record: decorateProfile(provisioned.profile, user, true),
+    temporaryPassword: provisioned.temporaryPassword,
+    loginEmail: provisioned.loginEmail,
+  };
 }
 
 function listProfiles(user, query = {}) {
@@ -808,6 +896,7 @@ module.exports = {
   completePlacement,
   convertToEmployee,
   createProfile,
+  credentialsFor,
   downloadDocument,
   exportProfiles,
   extendPlacement,

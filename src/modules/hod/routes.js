@@ -2,6 +2,7 @@ const express = require("express");
 const { authenticate } = require("../../auth/middleware");
 const announcementService = require("../announcements/service");
 const managerService = require("../manager/service");
+const nyscInternService = require("../nyscIntern/nyscIntern.service");
 
 const hodRouter = express.Router();
 
@@ -201,6 +202,55 @@ hodRouter.patch("/announcements/:id/unpin", handle((req, res) => {
   managerService.buildScope(req.user);
   const result = announcementService.setPin(req.params.id, false, req.user);
   return result ? send(res, "Announcement unpinned.", result.record) : notFound(res, "ANNOUNCEMENT_NOT_FOUND");
+}));
+
+hodRouter.get("/nysc-interns/dashboard", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "HOD NYSC and interns dashboard loaded.", nyscInternService.getDashboard(req.user));
+}));
+hodRouter.get("/nysc-interns/export", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const csv = nyscInternService.exportProfiles(req.user, req.query);
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", "attachment; filename=\"nysc-interns.csv\"");
+  return res.status(200).send(csv);
+}));
+hodRouter.get("/nysc-interns", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return paged(res, "HOD NYSC and intern members loaded.", nyscInternService.listProfiles(req.user, req.query));
+}));
+hodRouter.post("/nysc-interns", handle(async (req, res) => {
+  managerService.buildScope(req.user);
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
+}));
+hodRouter.get("/nysc-interns/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return send(res, "HOD NYSC/intern profile loaded.", nyscInternService.getDetails(req.params.id, req.user));
+}));
+hodRouter.patch("/nysc-interns/:id", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.updateProfile(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "HOD NYSC/intern profile updated.", result.record) : notFound(res, "NYSC_INTERN_PROFILE_NOT_FOUND");
+}));
+hodRouter.post("/nysc-interns/:id/supervisor", handle((req, res) => {
+  managerService.buildScope(req.user);
+  const result = nyscInternService.assignSupervisor(req.params.id, req.body || {}, req.user);
+  return result ? send(res, "Placement supervisor assigned.", result.record) : notFound(res, "NYSC_INTERN_PROFILE_NOT_FOUND");
+}));
+hodRouter.get("/nysc", handle((req, res) => {
+  managerService.buildScope(req.user);
+  return paged(res, "HOD NYSC and intern members loaded.", nyscInternService.listProfiles(req.user, req.query));
+}));
+hodRouter.post("/nysc", handle(async (req, res) => {
+  managerService.buildScope(req.user);
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
+}));
+hodRouter.post("/nysc-interns/members", handle(async (req, res) => {
+  managerService.buildScope(req.user);
+  const result = await nyscInternService.createProfile(req.body || {}, req.user);
+  return res.status(201).json({ success: true, message: "NYSC/intern member created.", ...nyscInternService.credentialsFor(result) });
 }));
 
 hodRouter.get("/leave", handle((req, res) => paged(res, "HOD leave requests loaded.", scopedList("leave_requests", req))));
